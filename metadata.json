@@ -1,0 +1,6 @@
+{
+  "name": "JE-App",
+  "description": "Una aplicación interactiva para la juventud comprometida con los ecosistemas latinoamericanos de Jóvenes y Ecosistemas Latinoamérica. Incluye calendario interactivo de actividades, carnet digital y feed informativo de IA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
