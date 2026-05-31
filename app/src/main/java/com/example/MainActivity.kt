@@ -2,6 +2,7 @@ package com.example
 
 import android.os.Bundle
 import android.content.Intent
+import android.net.Uri
 import android.provider.CalendarContract
 import android.widget.Toast
 import android.app.NotificationChannel
@@ -114,7 +115,13 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            MyApplicationTheme {
+            val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+            val isDark = when (prefTheme) {
+                "light" -> false
+                "dark" -> true
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            MyApplicationTheme(darkTheme = isDark) {
                 MainScreen(viewModel)
             }
         }
@@ -125,7 +132,7 @@ enum class NavigationTab(val label: String, val iconSelected: androidx.compose.u
     ACTIVITIES("Inicio", Icons.Filled.Home, Icons.Outlined.Home, "tab_activities"),
     CALENDAR("Eventos", Icons.Filled.DateRange, Icons.Outlined.DateRange, "tab_calendar"),
     CARNET("Carnet", Icons.Filled.CardMembership, Icons.Outlined.CardMembership, "tab_carnet"),
-    FEED("Novedades", Icons.Filled.MenuBook, Icons.Outlined.MenuBook, "tab_feed"),
+    FEED("Noticias", Icons.Filled.MenuBook, Icons.Outlined.MenuBook, "tab_feed"),
     ADMIN("Consola", Icons.Filled.AdminPanelSettings, Icons.Outlined.AdminPanelSettings, "tab_admin")
 }
 
@@ -192,6 +199,12 @@ fun MainScreen(viewModel: AppViewModel) {
     var showNotificationDialog by remember { mutableStateOf(false) }
     var showProfileMenu by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showBugReportDialog by remember { mutableStateOf(false) }
+
+    var selectedActivityForDetail by remember { mutableStateOf<EcoActivity?>(null) }
+    var selectedActivityForEdit by remember { mutableStateOf<EcoActivity?>(null) }
+    var selectedArticleForDetail by remember { mutableStateOf<EcoArticle?>(null) }
+    var selectedArticleForEdit by remember { mutableStateOf<EcoArticle?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -385,32 +398,40 @@ fun MainScreen(viewModel: AppViewModel) {
                                         fontSize = 22.sp
                                     )
                                 }
-                            }
-
-                            DropdownMenu(
-                                expanded = showProfileMenu,
-                                onDismissRequest = { showProfileMenu = false },
-                                modifier = Modifier
-                                    .background(MaterialTheme.colorScheme.surface)
-                                    .clip(RoundedCornerShape(16.dp))
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text("Configuración", fontWeight = FontWeight.Medium, fontSize = 13.sp) },
-                                    leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) },
-                                    onClick = {
-                                        showProfileMenu = false
-                                        showSettingsDialog = true
-                                    }
-                                )
-                                Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                                DropdownMenuItem(
-                                    text = { Text("Cerrar Sesión", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error) },
-                                    leadingIcon = { Icon(Icons.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp)) },
-                                    onClick = {
-                                        showProfileMenu = false
-                                        viewModel.logout()
-                                    }
-                                )
+                                DropdownMenu(
+                                    expanded = showProfileMenu,
+                                    onDismissRequest = { showProfileMenu = false },
+                                    modifier = Modifier
+                                        .background(MaterialTheme.colorScheme.surface)
+                                        .clip(RoundedCornerShape(16.dp))
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Configuración", fontWeight = FontWeight.Medium, fontSize = 13.sp) },
+                                        leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showProfileMenu = false
+                                            showSettingsDialog = true
+                                        }
+                                    )
+                                    Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                    DropdownMenuItem(
+                                        text = { Text("Reportar Bug", fontWeight = FontWeight.Medium, fontSize = 13.sp) },
+                                        leadingIcon = { Icon(Icons.Filled.BugReport, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showProfileMenu = false
+                                            showBugReportDialog = true
+                                        }
+                                    )
+                                    Divider(modifier = Modifier.padding(vertical = 4.dp), color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                    DropdownMenuItem(
+                                        text = { Text("Cerrar Sesión", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.error) },
+                                        leadingIcon = { Icon(Icons.Filled.Logout, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp)) },
+                                        onClick = {
+                                            showProfileMenu = false
+                                            viewModel.logout()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -486,7 +507,8 @@ fun MainScreen(viewModel: AppViewModel) {
                             memberPhotoUrl = currentMember.photoUri,
                             onNavigateToCarnet = { currentTab = NavigationTab.CARNET },
                             onToggleEnroll = { viewModel.toggleEnrollment(it, currentMember) },
-                            onDeleteActivity = { viewModel.deleteActivity(it) }
+                            onDeleteActivity = { viewModel.deleteActivity(it) },
+                            onCardClick = { selectedActivityForDetail = it }
                         )
                     }
                     NavigationTab.CALENDAR -> {
@@ -494,7 +516,8 @@ fun MainScreen(viewModel: AppViewModel) {
                             activities = mappedActivitiesByEnrollment,
                             isCoordinadorMode = isCoordinadorMode,
                             onToggleEnroll = { viewModel.toggleEnrollment(it, currentMember) },
-                            onDeleteActivity = { viewModel.deleteActivity(it) }
+                            onDeleteActivity = { viewModel.deleteActivity(it) },
+                            onCardClick = { selectedActivityForDetail = it }
                         )
                     }
                     NavigationTab.CARNET -> {
@@ -521,7 +544,8 @@ fun MainScreen(viewModel: AppViewModel) {
                             viewModel = viewModel,
                             isCoordinadorMode = isCoordinadorMode,
                             onDeleteArticle = { viewModel.deleteArticle(it) },
-                            onPublishReportClick = { showAddReportDialog = true }
+                            onPublishReportClick = { showAddReportDialog = true },
+                            onArticleClick = { selectedArticleForDetail = it }
                         )
                     }
                     NavigationTab.ADMIN -> {
@@ -595,6 +619,53 @@ fun MainScreen(viewModel: AppViewModel) {
                 }
             }
         }
+    }
+
+    selectedActivityForDetail?.let { act ->
+        ActivityDetailDialog(
+            activity = act,
+            isCoordinadorMode = isCoordinadorMode,
+            onDismissRequest = { selectedActivityForDetail = null },
+            onEditClick = {
+                selectedActivityForDetail = null
+                selectedActivityForEdit = act
+            }
+        )
+    }
+
+    selectedActivityForEdit?.let { act ->
+        ActivityEditDialog(
+            activity = act,
+            onDismissRequest = { selectedActivityForEdit = null },
+            onSaveClick = { updated ->
+                viewModel.updateActivity(updated)
+                selectedActivityForEdit = null
+                viewModel.autoSync()
+            }
+        )
+    }
+
+    selectedArticleForDetail?.let { article ->
+        ArticleDetailFullScreenDialog(
+            article = article,
+            isCoordinadorMode = isCoordinadorMode,
+            onEditClick = {
+                selectedArticleForDetail = null
+                selectedArticleForEdit = article
+            },
+            onDismiss = { selectedArticleForDetail = null }
+        )
+    }
+
+    selectedArticleForEdit?.let { article ->
+        EditReportDialog(
+            article = article,
+            onDismiss = { selectedArticleForEdit = null },
+            onSave = { updated ->
+                viewModel.updateLocalArticle(updated)
+                selectedArticleForEdit = null
+            }
+        )
     }
 
     // Modern Security PIN Dialog to access administrative features
@@ -706,8 +777,8 @@ fun MainScreen(viewModel: AppViewModel) {
     if (showAddActivityDialog) {
         AddActivityDialog(
             onDismiss = { showAddActivityDialog = false },
-            onAdd = { title, desc, date, loc, country, cat, org, evType ->
-                viewModel.addActivity(title, desc, date, loc, country, cat, org, evType)
+            onAdd = { title, desc, date, loc, country, cat, org, evType, isMandatory ->
+                viewModel.addActivity(title, desc, date, loc, country, cat, org, evType, isMandatory)
                 showAddActivityDialog = false
             }
         )
@@ -717,8 +788,8 @@ fun MainScreen(viewModel: AppViewModel) {
     if (showAddReportDialog) {
         AddReportDialog(
             onDismiss = { showAddReportDialog = false },
-            onPublish = { title, content, cat, rgn ->
-                viewModel.publishLocalArticle(title, content, cat, rgn)
+            onPublish = { title, content, cat, rgn, photo ->
+                viewModel.publishLocalArticle(title, content, cat, rgn, photo)
                 showAddReportDialog = false
             }
         )
@@ -742,6 +813,14 @@ fun MainScreen(viewModel: AppViewModel) {
             onDismiss = { showSettingsDialog = false }
         )
     }
+
+    if (showBugReportDialog) {
+        BugReportDialog(
+            viewModel = viewModel,
+            currentMember = currentMember,
+            onDismiss = { showBugReportDialog = false }
+        )
+    }
 }
 
 // ==========================================
@@ -757,7 +836,8 @@ fun ActivitiesTab(
     memberPhotoUrl: String?,
     onNavigateToCarnet: () -> Unit,
     onToggleEnroll: (EcoActivity) -> Unit,
-    onDeleteActivity: (Int) -> Unit
+    onDeleteActivity: (Int) -> Unit,
+    onCardClick: (EcoActivity) -> Unit
 ) {
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
     val categories = listOf("Todos", "Educación", "Asamblea general", "Actividad", "Voluntariado")
@@ -982,7 +1062,8 @@ fun ActivitiesTab(
                         item = item,
                         isCoordinadorMode = isCoordinadorMode,
                         onToggleEnroll = { onToggleEnroll(item) },
-                        onDelete = { onDeleteActivity(item.id) }
+                        onDelete = { onDeleteActivity(item.id) },
+                        onClick = { onCardClick(item) }
                     )
                 }
             }
@@ -995,7 +1076,8 @@ fun ActivityCard(
     item: EcoActivity,
     isCoordinadorMode: Boolean,
     onToggleEnroll: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onClick: () -> Unit
 ) {
     val categoryStyle = remember(item.category) {
         when (item.category.lowercase()) {
@@ -1008,11 +1090,12 @@ fun ActivityCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
         ),
+        border = if (item.isMandatory) androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFDC2626)) else null,
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1041,13 +1124,30 @@ fun ActivityCard(
                 
                 // Text columns
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${item.date} • ${item.category}".uppercase(),
-                        color = categoryStyle.second,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${item.date} • ${item.category}".uppercase(),
+                            color = categoryStyle.second,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                        if (item.isMandatory) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFFFEE2E2), shape = RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 4.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "OBLIGATORIA",
+                                    color = Color(0xFF991B1B),
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = item.title,
@@ -1157,7 +1257,7 @@ fun ActivityCard(
 @Composable
 fun AddActivityDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String, String, String, String, String, String, String) -> Unit
+    onAdd: (String, String, String, String, String, String, String, String, Boolean) -> Unit
 ) {
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
@@ -1172,6 +1272,7 @@ fun AddActivityDialog(
     var cat by remember { mutableStateOf("JE-RAM") }
     var org by remember { mutableStateOf("") }
     var eventType by remember { mutableStateOf("Voluntariado") }
+    var isMandatory by remember { mutableStateOf(false) }
 
     // Dynamic country additions
     var countriesList by remember {
@@ -1289,6 +1390,31 @@ fun AddActivityDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true
                                 )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Actividad Obligatoria 🚨",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Las actividades obligatorias se destacan con un borde rojo elegante para llamar la atención del equipo.",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isMandatory,
+                                        onCheckedChange = { isMandatory = it }
+                                    )
+                                }
                             }
                         }
                     }
@@ -1550,7 +1676,8 @@ fun AddActivityDialog(
                                     country,
                                     cat,
                                     org.ifBlank { "Voluntariado Juvenil" },
-                                    eventType
+                                    eventType,
+                                    isMandatory
                                 )
                             }
                         },
@@ -1675,7 +1802,7 @@ fun CarnetTab(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Toca la credencial para voltearla y ver el eco-compromiso.",
+                    text = "Toca la credencial para voltearlo y ver tu código QR",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                     textAlign = TextAlign.Center
@@ -2600,7 +2727,8 @@ fun FeedTab(
     viewModel: AppViewModel,
     isCoordinadorMode: Boolean,
     onDeleteArticle: (Int) -> Unit,
-    onPublishReportClick: () -> Unit
+    onPublishReportClick: () -> Unit,
+    onArticleClick: (EcoArticle) -> Unit
 ) {
     val searchQuery = ""
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
@@ -2634,7 +2762,7 @@ fun FeedTab(
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
-                            text = "Boletín Ecológico Juventud",
+                            text = "Boletín Informativo de JE",
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -2774,7 +2902,8 @@ fun FeedTab(
                     ArticleCard(
                         item = item,
                         isCoordinadorMode = isCoordinadorMode,
-                        onDelete = { onDeleteArticle(item.id) }
+                        onDelete = { onDeleteArticle(item.id) },
+                        onClick = { onArticleClick(item) }
                     )
                 }
             }
@@ -2783,9 +2912,11 @@ fun FeedTab(
 }
 
 @Composable
-fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Unit) {
+fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Unit, onClick: () -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
@@ -2858,8 +2989,24 @@ fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Un
                 text = item.content,
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f),
-                lineHeight = 17.sp
+                lineHeight = 17.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis
             )
+
+            // Optional published Photo/Image Preview
+            if (!item.photoUri.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(10.dp))
+                AsyncImage(
+                    model = item.photoUri,
+                    contentDescription = "Imagen de la publicación",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                )
+            }
 
             Spacer(modifier = Modifier.height(12.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
@@ -2898,118 +3045,804 @@ fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Un
 }
 
 // Dialog to author a manual eco-report / upload information
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddReportDialog(onDismiss: () -> Unit, onPublish: (String, String, String, String) -> Unit) {
+fun AddReportDialog(
+    onDismiss: () -> Unit,
+    onPublish: (String, String, String, String, String?) -> Unit
+) {
     var title by remember { mutableStateOf("") }
     var content by remember { mutableStateOf("") }
     var category by remember { mutableStateOf("Conservación") }
-    var region by remember { mutableStateOf("Amazonas") }
+    var region by remember { mutableStateOf("Ecuador") }
+    var photoUri by remember { mutableStateOf<String?>(null) }
 
-    val categoriesList = listOf("Conservación", "Biodiversidad", "Reforestación", "Leyes", "Comunidad")
-    val regionsList = listOf("Amazonía", "Andes", "Patagonia", "El Litoral", "Centroamérica", "El Caribe")
+    val context = LocalContext.current
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val localPath = copyUriToLocalStorage(context, uri)
+            photoUri = localPath
+        }
+    }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(8.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
         ) {
-            LazyColumn(
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                    .fillMaxSize()
+                    .imePadding()
             ) {
-                item {
-                    Text(
-                        text = "Subir Información / Reporte",
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = "Publica información valiosa sobre ecosistemas locales en la aplicación.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-                    )
-                }
-
-                item {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        label = { Text("Título de la publicación") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                item {
-                    OutlinedTextField(
-                        value = content,
-                        onValueChange = { content = it },
-                        label = { Text("Contenido / Mensaje completo") },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(140.dp),
-                        maxLines = 8
-                    )
-                }
-
-                item {
-                    // Category choose
-                    Column {
-                        Text("Tema / Categoría:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(categoriesList) { catCurrent ->
-                                FilterChip(
-                                    selected = category == catCurrent,
-                                    onClick = { category = catCurrent },
-                                    label = { Text(catCurrent, fontSize = 11.sp) }
-                                )
-                            }
-                        }
+                // Top Custom Header Row matching AddActivityDialog
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.secondary)
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Contribuir Reporte o Novedad",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondary
+                        )
+                        Text(
+                            text = "Publica información valiosa sobre ecosistemas locales",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f)
+                        )
                     }
                 }
 
-                item {
-                    // Region choose
-                    Column {
-                        Text("Bioma / Región:", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(regionsList) { currentZone ->
-                                FilterChip(
-                                    selected = region == currentZone,
-                                    onClick = { region = currentZone },
-                                    label = { Text(currentZone, fontSize = 11.sp) }
-                                )
-                            }
-                        }
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Título del reporte") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
-                }
 
-                item {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
-                    ) {
-                        TextButton(onClick = onDismiss) {
-                            Text("Cancelar")
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(
-                            onClick = {
-                                if (title.isNotBlank() && content.isNotBlank()) {
-                                    onPublish(title, content, category, region)
+                    item {
+                        OutlinedTextField(
+                            value = content,
+                            onValueChange = { content = it },
+                            label = { Text("Contenido / Mensaje completo") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp),
+                            maxLines = 10
+                        )
+                    }
+
+                    // Theme/Category custom input + suggested chips
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = category,
+                                onValueChange = { category = it },
+                                label = { Text("Tema o Categoría (Personalizado)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Sugerencias de Categorías:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val defaultCats = listOf("Conservación", "Biodiversidad", "Reforestación", "JE-RAM", "JE-Mental", "Derechos", "Educación")
+                                items(defaultCats) { catName ->
+                                    val isSelected = category.lowercase() == catName.lowercase()
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.secondary 
+                                                else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
+                                            )
+                                            .clickable { category = catName }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = catName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
                                 }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
-                            enabled = title.isNotBlank() && content.isNotBlank()
+                            }
+                        }
+                    }
+
+                    // Region renamed to "Países de los miembros" custom input + chips
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = region,
+                                onValueChange = { region = it },
+                                label = { Text("País") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Países de los miembros de JE:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val defaultCountries = listOf("Ecuador", "Venezuela", "Bolivia", "Guatemala", "México", "Colombia", "Perú", "Chile", "Argentina")
+                                items(defaultCountries) { countryName ->
+                                    val isSelected = region.lowercase() == countryName.lowercase()
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+                                            )
+                                            .clickable { region = countryName }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = countryName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Visual optional image selection
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Imagen de la publicación (Opcional)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        photoLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Image, contentDescription = "Subir foto")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Seleccionar Imagen")
+                                }
+                                if (photoUri != null) {
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(70.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = photoUri,
+                                            contentDescription = "Vista previa",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        IconButton(
+                                            onClick = { photoUri = null },
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(24.dp)
+                                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Quitar foto",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Subir Publicación")
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancelar")
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Button(
+                                onClick = {
+                                    if (title.isNotBlank() && content.isNotBlank()) {
+                                        onPublish(title, content, category, region, photoUri)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                enabled = title.isNotBlank() && content.isNotBlank()
+                            ) {
+                                Text("Subir Publicación")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditReportDialog(
+    article: EcoArticle,
+    onDismiss: () -> Unit,
+    onSave: (EcoArticle) -> Unit
+) {
+    var title by remember { mutableStateOf(article.title) }
+    var content by remember { mutableStateOf(article.content) }
+    var category by remember { mutableStateOf(article.category) }
+    var region by remember { mutableStateOf(article.region) }
+    var photoUri by remember { mutableStateOf<String?>(article.photoUri) }
+
+    val context = LocalContext.current
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val localPath = copyUriToLocalStorage(context, uri)
+            photoUri = localPath
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+            ) {
+                // Top Custom Header Row matching AddActivityDialog
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.secondary)
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onSecondary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Editar Reporte o Novedad",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondary
+                        )
+                        Text(
+                            text = "Modificar información del ecosistema local",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            label = { Text("Título del reporte") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = content,
+                            onValueChange = { content = it },
+                            label = { Text("Contenido / Mensaje completo") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp),
+                            maxLines = 10
+                        )
+                    }
+
+                    // Theme/Category custom input + suggested chips
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = category,
+                                onValueChange = { category = it },
+                                label = { Text("Tema o Categoría (Personalizado)") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Sugerencias de Categorías:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val defaultCats = listOf("Conservación", "Biodiversidad", "Reforestación", "JE-RAM", "JE-Mental", "Derechos", "Educación")
+                                items(defaultCats) { catName ->
+                                    val isSelected = category.lowercase() == catName.lowercase()
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.secondary 
+                                                else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
+                                              )
+                                            .clickable { category = catName }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = catName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Region renamed to "Países de los miembros" custom input + chips
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(
+                                value = region,
+                                onValueChange = { region = it },
+                                label = { Text("País") },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = "Países de los miembros de JE:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val defaultCountries = listOf("Ecuador", "Venezuela", "Bolivia", "Guatemala", "México", "Colombia", "Perú", "Chile", "Argentina")
+                                items(defaultCountries) { countryName ->
+                                    val isSelected = region.lowercase() == countryName.lowercase()
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(
+                                                if (isSelected) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
+                                            )
+                                            .clickable { region = countryName }
+                                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    ) {
+                                        Text(
+                                            text = countryName,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Visual optional image selection
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Imagen de la publicación (Opcional)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        photoLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                    )
+                                ) {
+                                    Icon(Icons.Default.Image, contentDescription = "Subir foto")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Seleccionar Imagen")
+                                }
+                                if (photoUri != null) {
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(70.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = photoUri,
+                                            contentDescription = "Vista previa",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        IconButton(
+                                            onClick = { photoUri = null },
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .size(24.dp)
+                                                .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Quitar foto",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = onDismiss) {
+                                Text("Cancelar")
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Button(
+                                onClick = {
+                                    if (title.isNotBlank() && content.isNotBlank()) {
+                                        val updated = article.copy(
+                                            title = title,
+                                            content = content,
+                                            category = category,
+                                            region = region,
+                                            photoUri = photoUri
+                                        )
+                                        onSave(updated)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                enabled = title.isNotBlank() && content.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "Guardar", modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Guardar Cambios")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BugReportDialog(
+    viewModel: AppViewModel,
+    currentMember: Member,
+    onDismiss: () -> Unit
+) {
+    var bugComment by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf<String?>(null) }
+    var isSending by remember { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val localPath = copyUriToLocalStorage(context, uri)
+            photoUri = localPath
+        }
+    }
+
+    Dialog(
+        onDismissRequest = { if (!isSending) onDismiss() },
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !isSending,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+            ) {
+                // Header row matching the visual identity
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onDismiss,
+                        enabled = !isSending
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Reportar un Bug 🐛",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            text = "Envío directo a soporte de Juventud Ecológica",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+
+                if (isSending) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(16.dp)) {
+                                Text(
+                                    text = "El reporte se enviará de forma 100% directa al equipo de soporte de Juventud Ecológica en je.react21@gmail.com, sin necesidad de abrir la aplicación de correo.",
+                                    fontSize = 13.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    item {
+                        OutlinedTextField(
+                            value = bugComment,
+                            onValueChange = { bugComment = it },
+                            label = { Text("Describe el error / Comentarios") },
+                            placeholder = { Text("Escribe qué fallo ocurrió, qué estabas haciendo y cómo podemos reproducirlo...") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp),
+                            maxLines = 10,
+                            enabled = !isSending
+                        )
+                    }
+
+                    // Optional screenshot attachment selection
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "Captura de pantalla o imagen del error (Opcional)",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        photoLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                                    ),
+                                    enabled = !isSending
+                                ) {
+                                    Icon(Icons.Default.AddPhotoAlternate, contentDescription = "Subir foto")
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Adjuntar Imagen")
+                                }
+                                if (photoUri != null) {
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(70.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                                    ) {
+                                        AsyncImage(
+                                            model = photoUri,
+                                            contentDescription = "Vista previa del bug",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                        if (!isSending) {
+                                            IconButton(
+                                                onClick = { photoUri = null },
+                                                modifier = Modifier
+                                                    .align(Alignment.TopEnd)
+                                                    .size(24.dp)
+                                                    .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = "Quitar foto",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(24.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = onDismiss,
+                                enabled = !isSending
+                            ) {
+                                Text("Cancelar")
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Button(
+                                onClick = {
+                                    if (bugComment.isNotBlank()) {
+                                        isSending = true
+                                        viewModel.sendBugReportDirectly(
+                                            comment = bugComment,
+                                            photoPath = photoUri,
+                                            onSuccess = {
+                                                Toast.makeText(context, "¡Reporte enviado exitosamente directo a soporte!\nDestinatario: je.react21@gmail.com", Toast.LENGTH_LONG).show()
+                                                isSending = false
+                                                onDismiss()
+                                            },
+                                            onError = { error ->
+                                                Toast.makeText(context, "Fallo al enviar el reporte: $error", Toast.LENGTH_LONG).show()
+                                                isSending = false
+                                            }
+                                        )
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                enabled = bugComment.isNotBlank() && !isSending
+                            ) {
+                                if (isSending) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        color = MaterialTheme.colorScheme.onError,
+                                        strokeWidth = 2.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Enviando...")
+                                } else {
+                                    Icon(Icons.Default.Send, contentDescription = "Enviar", modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Enviar Reporte")
+                                }
+                            }
                         }
                     }
                 }
@@ -3090,7 +3923,8 @@ fun CalendarTab(
     activities: List<EcoActivity>,
     isCoordinadorMode: Boolean,
     onToggleEnroll: (EcoActivity) -> Unit,
-    onDeleteActivity: (Int) -> Unit
+    onDeleteActivity: (Int) -> Unit,
+    onCardClick: (EcoActivity) -> Unit
 ) {
     val context = LocalContext.current
     var selectedEventTypeFilter by remember { mutableStateOf("Todos") }
@@ -3116,7 +3950,7 @@ fun CalendarTab(
     ) {
         // Tab Header
         Text(
-            text = "Calendario Ecológico".uppercase(),
+            text = "Calendario de Eventos".uppercase(),
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.primary,
@@ -3347,7 +4181,8 @@ fun CalendarTab(
                         },
                         onSchedulePushReminder = {
                             triggerPushNotification(context, event.title, event.date)
-                        }
+                        },
+                        onClick = { onCardClick(event) }
                     )
                 }
             }
@@ -3362,7 +4197,8 @@ fun CalendarEventCard(
     onDelete: () -> Unit,
     onRegister: () -> Unit,
     onAddToPersonalCalendar: () -> Unit,
-    onSchedulePushReminder: () -> Unit
+    onSchedulePushReminder: () -> Unit,
+    onClick: () -> Unit
 ) {
     val typeColor = remember(event.eventType) {
         when (event.eventType.lowercase()) {
@@ -3374,7 +4210,7 @@ fun CalendarEventCard(
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = androidx.compose.foundation.BorderStroke(1.dp, typeColor.copy(alpha = 0.15f)),
@@ -4851,6 +5687,8 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
 
 @Composable
 fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<EcoActivity>) {
+    var expandedActivityIds by remember { mutableStateOf(emptySet<Int>()) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Text(
             text = "Miembros Inscritos por Actividad".uppercase(),
@@ -4873,10 +5711,21 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
             ) {
                 items(activities) { activity ->
                     val activityEnrollments = enrollments.filter { it.activityId == activity.id }
+                    val isExpanded = expandedActivityIds.contains(activity.id)
+
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                expandedActivityIds = if (isExpanded) {
+                                    expandedActivityIds - activity.id
+                                } else {
+                                    expandedActivityIds + activity.id
+                                }
+                            },
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
                             Row(
@@ -4891,54 +5740,91 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
                                     color = MaterialTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f)
                                 )
-                                Badge(
-                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                ) {
-                                    Text("${activityEnrollments.size} inscritos", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Badge(
+                                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    ) {
+                                        Text("${activityEnrollments.size} inscritos", fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Icon(
+                                        imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = if (isExpanded) "Colapsar" else "Expandir",
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
                                 }
                             }
                             Text(
-                                text = "Fecha: ${activity.date} | Categoría: ${activity.category}",
+                                text = "Fecha de Actividad: ${activity.date} | Categoría: ${activity.category}",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
                             
-                            Spacer(modifier = Modifier.height(8.dp))
-                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
-                            Spacer(modifier = Modifier.height(8.dp))
+                            AnimatedVisibility(visible = isExpanded) {
+                                Column {
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                    Spacer(modifier = Modifier.height(8.dp))
 
-                            if (activityEnrollments.isEmpty()) {
-                                Text(
-                                    text = "Ningún miembro se ha inscrito todavía.",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                                    style = androidx.compose.ui.text.TextStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
-                                )
-                            } else {
-                                activityEnrollments.forEach { enrollment ->
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(16.dp))
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Text(
-                                                text = enrollment.memberName,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Medium,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
+                                    if (activityEnrollments.isEmpty()) {
                                         Text(
-                                            text = enrollment.memberEmail,
+                                            text = "Ningún miembro se ha inscrito todavía.",
                                             fontSize = 11.sp,
-                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                                            style = androidx.compose.ui.text.TextStyle(fontStyle = androidx.compose.ui.text.font.FontStyle.Italic),
+                                            modifier = Modifier.padding(vertical = 4.dp)
                                         )
+                                    } else {
+                                        activityEnrollments.forEach { enrollment ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.CheckCircle,
+                                                        contentDescription = null,
+                                                        tint = MaterialTheme.colorScheme.primary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(6.dp))
+                                                    Column {
+                                                        Text(
+                                                            text = enrollment.memberName,
+                                                            fontSize = 12.sp,
+                                                            fontWeight = FontWeight.Medium,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        Text(
+                                                            text = enrollment.memberEmail,
+                                                            fontSize = 10.sp,
+                                                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                                        )
+                                                    }
+                                                }
+                                                Column(horizontalAlignment = Alignment.End) {
+                                                    Text(
+                                                        text = "Inscrito el:",
+                                                        fontSize = 9.sp,
+                                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                    Text(
+                                                        text = enrollment.enrolledAt,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Medium,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f))
+                                        }
                                     }
                                 }
                             }
@@ -5209,11 +6095,14 @@ fun AppSettingsDialog(
     viewModel: com.example.ui.AppViewModel,
     onDismiss: () -> Unit
 ) {
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
     val cloudSyncUrl by viewModel.cloudSyncUrl.collectAsStateWithLifecycle()
+    val cloudSecurityKey by viewModel.cloudSecurityKey.collectAsStateWithLifecycle()
     val prefNotifActividades by viewModel.prefNotifActividades.collectAsStateWithLifecycle()
     val prefNotifNovedades by viewModel.prefNotifNovedades.collectAsStateWithLifecycle()
     val prefNotifNube by viewModel.prefNotifNube.collectAsStateWithLifecycle()
     val prefNotifSistema by viewModel.prefNotifSistema.collectAsStateWithLifecycle()
+    val currentMember by viewModel.loggedInMember.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
 
@@ -5261,6 +6150,71 @@ fun AppSettingsDialog(
                             contentDescription = "Cerrar",
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+
+                Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                // Tema Visual Section
+                Text(
+                    text = "Tema Visual",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    val themeOptions = listOf(
+                        Triple("system", "Sistema", Icons.Default.PhoneAndroid),
+                        Triple("light", "Claro", Icons.Default.WbSunny),
+                        Triple("dark", "Oscuro", Icons.Default.NightsStay)
+                    )
+
+                    themeOptions.forEach { (optionId, label, icon) ->
+                        val isSelected = prefTheme == optionId
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f)
+                                )
+                                .border(
+                                    width = 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(12.dp)
+                                )
+                                .clickable {
+                                    viewModel.updatePrefTheme(optionId)
+                                }
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = label,
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary
+                                           else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = label,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
                     }
                 }
 
@@ -5376,38 +6330,78 @@ fun AppSettingsDialog(
 
                 Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                // Section 2: Cloud Storage URL (Read-only stable card info)
-                Text(
-                    text = "Dirección de Sincronización (Nube)",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
-                )
+                // Section 2: Configuración de la Nube (Solamente para Administradores)
+                if (currentMember?.isAdmin == true && currentMember?.email != "coordinador@je.org") {
+                    Text(
+                        text = "Configuración de Nube y Privacidad (E2EE)",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
 
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
+                    var inputUrl by remember { mutableStateOf(cloudSyncUrl) }
+                    var inputKey by remember { mutableStateOf(cloudSecurityKey) }
+                    var showKey by remember { mutableStateOf(false) }
+
                     Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(
-                            text = "Servidor Oficial Estable",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary
+                        OutlinedTextField(
+                            value = inputUrl,
+                            onValueChange = { inputUrl = it },
+                            label = { Text("URL Base de Datos (Firebase / KVDB)", fontSize = 11.sp) },
+                            placeholder = { Text("https://example.firebaseio.com/") },
+                            singleLine = true,
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                            modifier = Modifier.fillMaxWidth(),
+                            leadingIcon = {
+                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            }
                         )
-                        Text(
-                            text = cloudSyncUrl,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
 
-                Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        OutlinedTextField(
+                            value = inputKey,
+                            onValueChange = { inputKey = it },
+                            label = { Text("Clave de Seguridad E2EE (Privacidad)", fontSize = 11.sp) },
+                            placeholder = { Text("Clave de cifrado comunitario") },
+                            singleLine = true,
+                            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                            modifier = Modifier.fillMaxWidth(),
+                            leadingIcon = {
+                                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
+                            },
+                            trailingIcon = {
+                                IconButton(onClick = { showKey = !showKey }) {
+                                    Icon(
+                                        imageVector = if (showKey) Icons.Default.CheckCircle else Icons.Default.NotificationsNone,
+                                        contentDescription = "Mostrar clave",
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        )
+
+                        Button(
+                            onClick = {
+                                if (inputUrl.isNotBlank()) {
+                                    viewModel.updateCloudSyncUrl(inputUrl.trim())
+                                }
+                                viewModel.updateCloudSecurityKey(inputKey.trim())
+                                android.widget.Toast.makeText(context, "Ajustes de Nube guardados ✓", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Guardar Configuración", fontSize = 12.sp)
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                }
 
                 // Section 3: Diagnostic information
                 Text(
@@ -5428,7 +6422,7 @@ fun AppSettingsDialog(
                     ) {
                         Text("• Versión de App: JE-App Production v2.5 Stable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("• Estado de red: Online & Auto-heal habilitado", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("• Motor de sincronización: OK (JSON Blob Engine)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("• Motor de sincronización: OK (Firebase Realtime DB)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -5856,6 +6850,837 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActivityDetailDialog(
+    activity: EcoActivity,
+    isCoordinadorMode: Boolean,
+    onDismissRequest: () -> Unit,
+    onEditClick: () -> Unit
+) {
+    Dialog(onDismissRequest = onDismissRequest) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(24.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Title and Project (Organizer) Heading
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = activity.title,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        lineHeight = 28.sp
+                    )
+                    Text(
+                        text = activity.organizer,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+
+                // Header (Category indicator)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val badgeColor = when (activity.category.lowercase()) {
+                        "reforestación" -> Color(0xFFD1FAE5) to Color(0xFF047857)
+                        "limpieza" -> Color(0xFFE0F2FE) to Color(0xFF0284C7)
+                        "educación" -> Color(0xFFFEF3C7) to Color(0xFFD97706)
+                        "conservación" -> Color(0xFFE5E7E2) to Color(0xFF394931)
+                        else -> Color(0xFFEAECE9) to Color(0xFF4C5E43)
+                    }
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(badgeColor.first)
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            text = activity.category.uppercase(),
+                            color = badgeColor.second,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    if (activity.isMandatory) {
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFFFEE2E2), shape = RoundedCornerShape(4.dp))
+                                .padding(horizontal = 6.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = "OBLIGATORIA",
+                                color = Color(0xFF991B1B),
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                // Metadata Column
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    DetailMetaRow(Icons.Filled.DateRange, "Fecha", activity.date)
+                    DetailMetaRow(Icons.Filled.LocationOn, "Lugar", "${activity.location}, ${activity.country}")
+                    DetailMetaRow(Icons.Filled.Person, "Organizador", activity.organizer)
+                    DetailMetaRow(Icons.Filled.Category, "Tipo de Evento", activity.eventType)
+                    DetailMetaRow(
+                        Icons.Filled.CheckCircle, 
+                        "Inscripción", 
+                        if (activity.isUserRegistered) "Inscrito ✓" else "No inscrito"
+                    )
+                }
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                // Detailed Description
+                Text(
+                    text = "Descripción del Evento",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Text(
+                    text = activity.description,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                    lineHeight = 20.sp
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Actions Bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismissRequest) {
+                        Text("Cerrar")
+                    }
+                    if (isCoordinadorMode) {
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            onClick = onEditClick,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Edit,
+                                contentDescription = "Editar",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Editar")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ArticleDetailFullScreenDialog(
+    article: EcoArticle,
+    isCoordinadorMode: Boolean = false,
+    onEditClick: (() -> Unit)? = null,
+    onDismiss: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier.fillMaxSize()
+            ) {
+                // Header Bar (Title of screen)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Regresar",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    Text(
+                        text = "Reporte Completo",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    if (isCoordinadorMode && onEditClick != null) {
+                        IconButton(onClick = onEditClick) {
+                            Icon(
+                                imageVector = Icons.Default.Edit,
+                                contentDescription = "Editar Reporte",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else {
+                        // Spacer to balance
+                        Spacer(modifier = Modifier.size(48.dp))
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 24.dp)
+                ) {
+                    // Optional Featured Image or Card containing Title if no image
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(20.dp))
+                    ) {
+                        if (!article.photoUri.isNullOrBlank()) {
+                            AsyncImage(
+                                model = article.photoUri,
+                                contentDescription = "Imagen del reporte",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = article.title,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    textAlign = TextAlign.Center,
+                                    lineHeight = 24.sp
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    // Theme/Category tag & Region (Country)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer)
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = article.category.uppercase(),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.secondaryContainer)
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(
+                                text = article.region,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 0.5.sp
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Title of Article (displayed below image only, if an image is loaded)
+                    if (!article.photoUri.isNullOrBlank()) {
+                        Text(
+                            text = article.title,
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 30.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(
+                        text = "Publicado: ${article.publishDate}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(vertical = 16.dp),
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
+                    )
+
+                    // Article Content Content
+                    Text(
+                        text = article.content,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.85f),
+                        lineHeight = 24.sp
+                    )
+
+                    Spacer(modifier = Modifier.height(32.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DetailMetaRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Column {
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+            )
+            Text(
+                text = value,
+                fontSize = 13.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ActivityEditDialog(
+    activity: EcoActivity,
+    onDismissRequest: () -> Unit,
+    onSaveClick: (EcoActivity) -> Unit
+) {
+    var title by remember { mutableStateOf(activity.title) }
+    var desc by remember { mutableStateOf(activity.description) }
+    var date by remember { mutableStateOf(activity.date) }
+    
+    // Parsing Location parameters
+    var isVirtual by remember { mutableStateOf(activity.location.lowercase().contains("virtual") || activity.location.contains("Enlace:")) }
+    var loc by remember {
+        mutableStateOf(
+            if (isVirtual) {
+                if (activity.location.contains(" - Enlace:")) {
+                    activity.location.substringBefore(" - Enlace:")
+                } else if (activity.location.contains("Enlace:")) {
+                    activity.location.substringBefore("Enlace:")
+                } else {
+                    activity.location
+                }
+            } else {
+                activity.location
+            }
+        )
+    }
+    var virtualLink by remember {
+        mutableStateOf(
+            if (isVirtual && activity.location.contains("Enlace:")) {
+                activity.location.substringAfter("Enlace:").trim()
+            } else {
+                ""
+            }
+        )
+    }
+
+    var country by remember { mutableStateOf(activity.country) }
+    var cat by remember { mutableStateOf(activity.category) }
+    var org by remember { mutableStateOf(activity.organizer) }
+    var eventType by remember { mutableStateOf(activity.eventType) }
+    var isMandatory by remember { mutableStateOf(activity.isMandatory) }
+
+    // Dynamic country list
+    var countriesList by remember {
+        mutableStateOf(
+            listOf("Ecuador", "Guatemala", "Bolivia", "Venezuela", "México", "Colombia", "Perú", "Chile", "Argentina", "Brasil", "América Latina", "Internacional").toMutableList().apply {
+                if (activity.country.isNotBlank() && !contains(activity.country)) {
+                    add(activity.country)
+                }
+            }.toList()
+        )
+    }
+    var customCountryText by remember { mutableStateOf("") }
+
+    val catsList = listOf("JE-RAM", "JE-Visual", "JE-Ambiente", "JE-VIH", "JE-Podcast", "JE-360", "JE-Mental")
+    val eventTypesList = listOf("Educación", "Asamblea general", "Actividad", "Voluntariado")
+
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .imePadding()
+            ) {
+                // Top Custom Header Row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 16.dp, vertical = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismissRequest) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Editar Actividad Ecológica",
+                            fontSize = 19.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Text(
+                            text = "Modificar la información de la convocatoria actual",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+
+                // Form Content
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Card 1: Información Básica
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "1. Información Básica",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                
+                                OutlinedTextField(
+                                    value = title,
+                                    onValueChange = { title = it },
+                                    label = { Text("Título de la actividad") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+
+                                OutlinedTextField(
+                                    value = desc,
+                                    onValueChange = { desc = it },
+                                    label = { Text("Descripción / Convocatoria") },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(115.dp),
+                                    maxLines = 5
+                                )
+
+                                OutlinedTextField(
+                                    value = org,
+                                    onValueChange = { org = it },
+                                    label = { Text("Organizador (Colectivo / Organización)") },
+                                    placeholder = { Text("Ej. Voluntariado Juvenil") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = "Actividad Obligatoria 🚨",
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "Las actividades obligatorias se destacan con un borde rojo elegante para llamar la atención del equipo.",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                    Switch(
+                                        checked = isMandatory,
+                                        onCheckedChange = { isMandatory = it }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Card 2: Fecha, Modalidad y Ubicación
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "2. Fecha y Ubicación",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                OutlinedTextField(
+                                    value = date,
+                                    onValueChange = { date = it },
+                                    label = { Text("Fecha de inicio (AAAA-MM-DD)") },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    singleLine = true
+                                )
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                // Modalidad Switcher (Presencial vs Virtual)
+                                Text(
+                                    text = "Modalidad del evento:",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    FilterChip(
+                                        selected = !isVirtual,
+                                        onClick = { isVirtual = false },
+                                        label = { Text("Presencial 📍") }
+                                    )
+                                    FilterChip(
+                                        selected = isVirtual,
+                                        onClick = { isVirtual = true },
+                                        label = { Text("Virtual 💻") }
+                                    )
+                                }
+
+                                if (isVirtual) {
+                                    OutlinedTextField(
+                                        value = loc,
+                                        onValueChange = { loc = it },
+                                        label = { Text("Plataforma virtual (ej. Google Meet, Zoom, Teams)") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = virtualLink,
+                                        onValueChange = { virtualLink = it },
+                                        label = { Text("Enlace / Link de la reunión virtual") },
+                                        placeholder = { Text("https://meet.google.com/...") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                } else {
+                                    OutlinedTextField(
+                                        value = loc,
+                                        onValueChange = { loc = it },
+                                        label = { Text("Dirección del Lugar físico") },
+                                        placeholder = { Text("Ej. Parque Central, Auditorio Principal") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Card 3: Categorías, Tipo y País Sede
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Text(
+                                    text = "3. Clasificación de Actividad",
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+
+                                // Tipo de evento list
+                                Column {
+                                    Text(
+                                        text = "Tipo de Evento:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(eventTypesList) { currentType ->
+                                            FilterChip(
+                                                selected = eventType == currentType,
+                                                onClick = { eventType = currentType },
+                                                label = { Text(currentType, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Categories changed to "Proyecto emblemático que realiza"
+                                Column {
+                                    Text(
+                                        text = "Proyecto emblemático que realiza:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(catsList) { currentCat ->
+                                            FilterChip(
+                                                selected = cat == currentCat,
+                                                onClick = { cat = currentCat },
+                                                label = { Text(currentCat, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                // Country tags + dynamic item creator
+                                Column {
+                                    Text(
+                                        text = "País Sede:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    LazyRow(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        items(countriesList) { currentC ->
+                                            FilterChip(
+                                                selected = country == currentC,
+                                                onClick = { country = currentC },
+                                                label = { Text(currentC, fontSize = 11.sp) }
+                                            )
+                                        }
+                                    }
+                                    
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    
+                                    // Add country dynamically to tags
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        OutlinedTextField(
+                                            value = customCountryText,
+                                            onValueChange = { customCountryText = it },
+                                            placeholder = { Text("Añadir otro país...", fontSize = 11.sp) },
+                                            modifier = Modifier.weight(1f),
+                                            singleLine = true,
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = Color.Transparent,
+                                                unfocusedContainerColor = Color.Transparent
+                                            )
+                                        )
+                                        Button(
+                                            onClick = {
+                                                if (customCountryText.isNotBlank()) {
+                                                    val trimmedC = customCountryText.trim()
+                                                    if (!countriesList.contains(trimmedC)) {
+                                                        countriesList = countriesList + trimmedC
+                                                    }
+                                                    country = trimmedC
+                                                    customCountryText = ""
+                                                }
+                                            },
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Add,
+                                                contentDescription = "Añadir país",
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Añadir", fontSize = 11.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    item {
+                        Spacer(modifier = Modifier.height(16.dp))
+                    }
+                }
+
+                // Action Bar at Bottom
+                HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.surface)
+                        .padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 44.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.height(48.dp)
+                    ) {
+                        Text("Cancelar", fontWeight = FontWeight.Medium)
+                    }
+                    Button(
+                        shape = RoundedCornerShape(20.dp),
+                        modifier = Modifier.height(48.dp),
+                        onClick = {
+                            if (title.isNotBlank() && desc.isNotBlank()) {
+                                val finalLoc = if (isVirtual) {
+                                    val platform = loc.ifBlank { "Virtual" }
+                                    if (virtualLink.isNotBlank()) "$platform - Enlace: $virtualLink" else platform
+                                } else {
+                                    loc.ifBlank { "Presencial" }
+                                }
+                                val updated = activity.copy(
+                                    title = title,
+                                    description = desc,
+                                    date = date,
+                                    location = finalLoc,
+                                    country = country,
+                                    category = cat,
+                                    organizer = org.ifBlank { "Voluntariado Juvenil" },
+                                    eventType = eventType,
+                                    isMandatory = isMandatory
+                                )
+                                onSaveClick(updated)
+                            }
+                        },
+                        enabled = title.isNotBlank() && desc.isNotBlank()
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "Guardar",
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Guardar Cambios", fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }

@@ -4,6 +4,7 @@ import android.util.Log
 import com.example.data.EcoActivity
 import com.example.data.EcoEnrollment
 import com.example.data.EcoNotification
+import com.example.data.EcoArticle
 import com.example.data.Member
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.Types
@@ -17,11 +18,15 @@ data class CloudDatabase(
     val activities: List<EcoActivity> = emptyList(),
     val members: List<Member> = emptyList(),
     val notifications: List<EcoNotification> = emptyList(),
-    val enrollments: List<EcoEnrollment> = emptyList()
+    val enrollments: List<EcoEnrollment> = emptyList(),
+    val articles: List<EcoArticle> = emptyList(),
+    val preferences: com.example.data.CloudPreferences? = null
 )
 
 object CloudSyncClient {
     private const val TAG = "CloudSyncClient"
+
+    var cloudSecurityKey: String = "JE-Organizacion-EcoTech-2026"
 
     var onNewUrlGenerated: ((String) -> Unit)? = null
 
@@ -48,6 +53,10 @@ object CloudSyncClient {
     private val enrollmentsAdapter = moshi.adapter<List<EcoEnrollment>>(
         Types.newParameterizedType(List::class.java, EcoEnrollment::class.java)
     )
+    private val articlesGroupAdapter = moshi.adapter<List<EcoArticle>>(
+        Types.newParameterizedType(List::class.java, EcoArticle::class.java)
+    )
+    private val preferencesAdapter = moshi.adapter(com.example.data.CloudPreferences::class.java)
 
     private fun isJsonBlob(url: String): Boolean {
         return url.contains("jsonblob.com", ignoreCase = true)
@@ -93,8 +102,14 @@ object CloudSyncClient {
             
             val enrollmentsJson = moshi.adapter(Any::class.java).toJson(root["enrollments"])
             val enrollments = parseEnrollments(enrollmentsJson)
+
+            val articlesJson = if (root.containsKey("articles")) moshi.adapter(Any::class.java).toJson(root["articles"]) else "[]"
+            val articles = parseArticlesGroup(articlesJson)
+
+            val preferencesJson = if (root.containsKey("preferences")) moshi.adapter(Any::class.java).toJson(root["preferences"]) else null
+            val preferences = if (preferencesJson != null) parsePreferences(preferencesJson) else null
             
-            CloudDatabase(activities, members, notifications, enrollments)
+            CloudDatabase(activities, members, notifications, enrollments, articles, preferences)
         } catch (e: Exception) {
             Log.e(TAG, "Error decoding database from jsonblob JSON", e)
             CloudDatabase()
@@ -102,12 +117,20 @@ object CloudSyncClient {
     }
 
     private fun serializeDatabase(db: CloudDatabase): String {
-        val map = mapOf(
+        val encryptedMembers = db.members.map { com.example.data.SecurityUtils.encryptMember(it, cloudSecurityKey) }
+        val encryptedEnrollments = db.enrollments.map { com.example.data.SecurityUtils.encryptEnrollment(it, cloudSecurityKey) }
+        val encryptedNotifications = db.notifications.map { com.example.data.SecurityUtils.encryptNotification(it, cloudSecurityKey) }
+
+        val map = mutableMapOf<String, Any>(
             "activities" to db.activities,
-            "members" to db.members,
-            "notifications" to db.notifications,
-            "enrollments" to db.enrollments
+            "members" to encryptedMembers,
+            "notifications" to encryptedNotifications,
+            "enrollments" to encryptedEnrollments,
+            "articles" to db.articles
         )
+        db.preferences?.let {
+            map["preferences"] = it
+        }
         val type = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
         return moshi.adapter<Map<String, Any>>(type).toJson(map)
     }
@@ -120,30 +143,6 @@ object CloudSyncClient {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     if (response.code == 404) {
-                        Log.w(TAG, "Cloud database returned 404. Attempting auto-healing...")
-                        if (isJsonBlob(trimmed)) {
-                            val emptyDb = CloudDatabase()
-                            val json = serializeDatabase(emptyDb)
-                            val postReq = Request.Builder()
-                                .url("https://jsonblob.com/api/jsonBlob")
-                                .post(json.toRequestBody(jsonMediaType))
-                                .header("Content-Type", "application/json")
-                                .header("Accept", "application/json")
-                                .build()
-                            try {
-                                client.newCall(postReq).execute().use { postRes ->
-                                    if (postRes.isSuccessful) {
-                                        val newLoc = postRes.header("Location") ?: postRes.header("location")
-                                        if (newLoc != null) {
-                                            Log.d(TAG, "Successfully generated new jsonblob URL: $newLoc")
-                                            onNewUrlGenerated?.invoke(newLoc)
-                                        }
-                                    }
-                                }
-                            } catch (postEx: Exception) {
-                                Log.e(TAG, "Failed auto-healing post", postEx)
-                            }
-                        }
                         Log.w(TAG, "Cloud database returned 404. Returning empty database configuration.")
                         return CloudDatabase()
                     }
@@ -172,41 +171,6 @@ object CloudSyncClient {
                 .build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    if (response.code == 404 && isJsonBlob(trimmed)) {
-                        Log.w(TAG, "Upload database returned 404. Auto-healing by creating empty/new blob...")
-                        val postReq = Request.Builder()
-                            .url("https://jsonblob.com/api/jsonBlob")
-                            .post(json.toRequestBody(jsonMediaType))
-                            .header("Content-Type", "application/json")
-                            .header("Accept", "application/json")
-                            .build()
-                        try {
-                            client.newCall(postReq).execute().use { postRes ->
-                                if (postRes.isSuccessful) {
-                                    val newLoc = postRes.header("Location") ?: postRes.header("location")
-                                    if (newLoc != null) {
-                                        Log.d(TAG, "Successfully re-created jsonblob URL: $newLoc")
-                                        onNewUrlGenerated?.invoke(newLoc)
-                                        // Try posting the real data to the new location
-                                        val retryReq = Request.Builder()
-                                            .url(newLoc)
-                                            .put(json.toRequestBody(jsonMediaType))
-                                            .header("Content-Type", "application/json")
-                                            .header("Accept", "application/json")
-                                            .build()
-                                        client.newCall(retryReq).execute().use { retryRes ->
-                                            if (retryRes.isSuccessful) {
-                                                return true
-                                            }
-                                        }
-                                        return true
-                                    }
-                                }
-                            }
-                        } catch (postEx: Exception) {
-                            Log.e(TAG, "Failed auto-healing upload", postEx)
-                        }
-                    }
                     throwNetworkError(response.code, "actualizar base de datos")
                 }
                 return true
@@ -295,7 +259,8 @@ object CloudSyncClient {
         val url = formatUrl(baseUrl, "members")
         Log.d(TAG, "Uploading ${members.size} members to $url")
         try {
-            val map = members.associateBy { it.email.replace(".", "_") }
+            val encryptedMembers = members.map { com.example.data.SecurityUtils.encryptMember(it, cloudSecurityKey) }
+            val map = encryptedMembers.associateBy { com.example.data.SecurityUtils.hashPasswordSha256(it.email).take(16) }
             val json = membersMapAdapter.toJson(map)
             val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
             client.newCall(request).execute().use { response ->
@@ -342,7 +307,8 @@ object CloudSyncClient {
         val url = formatUrl(baseUrl, "notifications")
         Log.d(TAG, "Uploading ${list.size} notifications to $url")
         try {
-            val json = notificationsAdapter.toJson(list)
+            val encryptedNotifications = list.map { com.example.data.SecurityUtils.encryptNotification(it, cloudSecurityKey) }
+            val json = notificationsAdapter.toJson(encryptedNotifications)
             val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -388,7 +354,8 @@ object CloudSyncClient {
         val url = formatUrl(baseUrl, "enrollments")
         Log.d(TAG, "Uploading ${list.size} enrollments to $url")
         try {
-            val json = enrollmentsAdapter.toJson(list)
+            val encryptedEnrollments = list.map { com.example.data.SecurityUtils.encryptEnrollment(it, cloudSecurityKey) }
+            val json = enrollmentsAdapter.toJson(encryptedEnrollments)
             val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -408,10 +375,15 @@ object CloudSyncClient {
             trimmed = "https://$trimmed"
         }
         trimmed = trimmed.removeSuffix("/")
-        return if (trimmed.contains("kvdb.io", ignoreCase = true)) {
-            "$trimmed/$path"
+        
+        val parts = trimmed.split("?", limit = 2)
+        val basePath = parts[0].removeSuffix("/")
+        val queryString = if (parts.size > 1) "?" + parts[1] else ""
+
+        return if (basePath.contains("kvdb.io", ignoreCase = true)) {
+            "$basePath/$path$queryString"
         } else {
-            "$trimmed/$path.json"
+            "$basePath/$path.json$queryString"
         }
     }
 
@@ -431,7 +403,7 @@ object CloudSyncClient {
     }
 
     private fun parseMembers(json: String): List<Member> {
-        return try {
+        val raw = try {
             val map = membersMapAdapter.fromJson(json)
             map?.values?.toList() ?: emptyList()
         } catch (e: Exception) {
@@ -442,10 +414,11 @@ object CloudSyncClient {
                 emptyList()
             }
         }
+        return raw.map { com.example.data.SecurityUtils.decryptMember(it, cloudSecurityKey) }
     }
 
     private fun parseNotifications(json: String): List<EcoNotification> {
-        return try {
+        val raw = try {
             notificationsAdapter.fromJson(json) ?: emptyList()
         } catch (e: Exception) {
             try {
@@ -456,10 +429,11 @@ object CloudSyncClient {
                 emptyList()
             }
         }
+        return raw.map { com.example.data.SecurityUtils.decryptNotification(it, cloudSecurityKey) }
     }
 
     private fun parseEnrollments(json: String): List<EcoEnrollment> {
-        return try {
+        val raw = try {
             enrollmentsAdapter.fromJson(json) ?: emptyList()
         } catch (e: Exception) {
             try {
@@ -469,6 +443,121 @@ object CloudSyncClient {
             } catch (ex: Exception) {
                 emptyList()
             }
+        }
+        return raw.map { com.example.data.SecurityUtils.decryptEnrollment(it, cloudSecurityKey) }
+    }
+
+    private fun parseArticlesGroup(json: String): List<EcoArticle> {
+        return try {
+            articlesGroupAdapter.fromJson(json) ?: emptyList()
+        } catch (e: Exception) {
+            try {
+                val type = Types.newParameterizedType(Map::class.java, String::class.java, EcoArticle::class.java)
+                val mapAdapter = moshi.adapter<Map<String, EcoArticle>>(type)
+                mapAdapter.fromJson(json)?.values?.toList() ?: emptyList()
+            } catch (ex: Exception) {
+                emptyList()
+            }
+        }
+    }
+
+    private fun parsePreferences(json: String): com.example.data.CloudPreferences? {
+        return try {
+            preferencesAdapter.fromJson(json)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    fun fetchArticles(baseUrl: String): List<EcoArticle> {
+        if (isJsonBlob(baseUrl)) {
+            return fetchFullDatabase(baseUrl).articles
+        }
+        val url = formatUrl(baseUrl, "articles")
+        Log.d(TAG, "Fetching articles from $url")
+        val request = Request.Builder().url(url).get().build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 404) return emptyList()
+                    throwNetworkError(response.code, "obtener artículos")
+                }
+                val bodyString = response.body?.string() ?: return emptyList()
+                if (bodyString == "null") return emptyList()
+                return parseArticlesGroup(bodyString)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetchArticles", e)
+            wrapException("obtener artículos", e)
+        }
+    }
+
+    fun uploadArticles(baseUrl: String, list: List<EcoArticle>): Boolean {
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updated = db.copy(articles = list)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val url = formatUrl(baseUrl, "articles")
+        Log.d(TAG, "Uploading ${list.size} articles to $url")
+        try {
+            val json = articlesGroupAdapter.toJson(list)
+            val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throwNetworkError(response.code, "subir artículos")
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception uploadArticles", e)
+            wrapException("subir artículos", e)
+        }
+    }
+
+    fun fetchPreferences(baseUrl: String): com.example.data.CloudPreferences? {
+        if (isJsonBlob(baseUrl)) {
+            return fetchFullDatabase(baseUrl).preferences
+        }
+        val url = formatUrl(baseUrl, "preferences")
+        Log.d(TAG, "Fetching preferences from $url")
+        val request = Request.Builder().url(url).get().build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 404) return null
+                    throwNetworkError(response.code, "obtener preferencias")
+                }
+                val bodyString = response.body?.string() ?: return null
+                if (bodyString == "null") return null
+                return preferencesAdapter.fromJson(bodyString)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetchPreferences", e)
+            wrapException("obtener preferencias", e)
+        }
+    }
+
+    fun uploadPreferences(baseUrl: String, prefs: com.example.data.CloudPreferences): Boolean {
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updated = db.copy(preferences = prefs)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val url = formatUrl(baseUrl, "preferences")
+        Log.d(TAG, "Uploading preferences to $url")
+        try {
+            val json = preferencesAdapter.toJson(prefs)
+            val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throwNetworkError(response.code, "subir preferencias")
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception uploadPreferences", e)
+            wrapException("subir preferencias", e)
         }
     }
 }

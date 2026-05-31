@@ -8,6 +8,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import android.util.Log
 import com.example.BuildConfig
 import com.example.data.*
 import com.example.data.api.Content
@@ -21,6 +22,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -59,67 +62,135 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val sharedPrefs = application.getSharedPreferences("je_app_prefs", Context.MODE_PRIVATE)
 
-    private val defaultUrl = "https://jsonblob.com/api/jsonBlob/019e7504-9660-7646-8a0a-837710498432"
+    private val defaultUrl = "https://je-app-3e271-default-rtdb.firebaseio.com/"
 
-    private val _cloudSyncUrl = MutableStateFlow(
-        run {
-            val saved = sharedPrefs.getString("cloud_sync_url", null)
-            val oldUrls = setOf(
-                "https://je-ecosistemas-cloud-sync-default-rtdb.firebaseio.com/",
-                "https://kvdb.io/je-eco-nvyqzw",
-                "https://jsonblob.com/api/jsonBlob/019e680e-91f0-7e6e-b236-4ae22640dccb"
-            )
-            if (saved == null || saved in oldUrls || saved.isBlank()) {
-                defaultUrl
-            } else {
-                saved
-            }
-        }
-    )
+    private val _cloudSyncUrl = MutableStateFlow(defaultUrl)
     val cloudSyncUrl: StateFlow<String> = _cloudSyncUrl.asStateFlow()
 
-    fun updateCloudSyncUrl(newUrl: String) {
-        val cleanUrl = newUrl.trim()
-        val oldUrls = setOf(
-            "https://je-ecosistemas-cloud-sync-default-rtdb.firebaseio.com/",
-            "https://kvdb.io/je-eco-nvyqzw",
-            "https://jsonblob.com/api/jsonBlob/019e680e-91f0-7e6e-b236-4ae22640dccb"
-        )
-        val urlToSave = if (cleanUrl in oldUrls || cleanUrl.isBlank()) defaultUrl else cleanUrl
-        sharedPrefs.edit().putString("cloud_sync_url", urlToSave).apply()
-        _cloudSyncUrl.value = urlToSave
+    private val _cloudSecurityKey = MutableStateFlow("JE-Organizacion-EcoTech-2026")
+    val cloudSecurityKey: StateFlow<String> = _cloudSecurityKey.asStateFlow()
+
+    fun loadUserPreferences(email: String?) {
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        _cloudSyncUrl.value = sharedPrefs.getString("pref_cloud_sync_url$suffix", defaultUrl) ?: defaultUrl
+        _cloudSecurityKey.value = sharedPrefs.getString("pref_cloud_security_key$suffix", "JE-Organizacion-EcoTech-2026") ?: "JE-Organizacion-EcoTech-2026"
+        com.example.data.api.CloudSyncClient.cloudSecurityKey = _cloudSecurityKey.value
+
+        _prefNotifActividades.value = sharedPrefs.getBoolean("pref_notif_actividades$suffix", sharedPrefs.getBoolean("pref_notif_actividades", true))
+        _prefNotifNovedades.value = sharedPrefs.getBoolean("pref_notif_novedades$suffix", sharedPrefs.getBoolean("pref_notif_novedades", true))
+        _prefNotifNube.value = sharedPrefs.getBoolean("pref_notif_nube$suffix", sharedPrefs.getBoolean("pref_notif_nube", true))
+        _prefNotifSistema.value = sharedPrefs.getBoolean("pref_notif_sistema$suffix", sharedPrefs.getBoolean("pref_notif_sistema", true))
+        _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", "system") ?: "system"
     }
 
-    private val _prefNotifActividades = MutableStateFlow(sharedPrefs.getBoolean("pref_notif_actividades", true))
+    fun updateCloudSyncUrl(newUrl: String) {
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putString("pref_cloud_sync_url$suffix", newUrl).apply()
+        _cloudSyncUrl.value = newUrl
+    }
+
+    fun updateCloudSecurityKey(newKey: String) {
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putString("pref_cloud_security_key$suffix", newKey).apply()
+        _cloudSecurityKey.value = newKey
+        com.example.data.api.CloudSyncClient.cloudSecurityKey = newKey
+    }
+
+    private val _prefTheme = MutableStateFlow("system")
+    val prefTheme = _prefTheme.asStateFlow()
+
+    private val _prefNotifActividades = MutableStateFlow(true)
     val prefNotifActividades = _prefNotifActividades.asStateFlow()
 
-    private val _prefNotifNovedades = MutableStateFlow(sharedPrefs.getBoolean("pref_notif_novedades", true))
+    private val _prefNotifNovedades = MutableStateFlow(true)
     val prefNotifNovedades = _prefNotifNovedades.asStateFlow()
 
-    private val _prefNotifNube = MutableStateFlow(sharedPrefs.getBoolean("pref_notif_nube", true))
+    private val _prefNotifNube = MutableStateFlow(true)
     val prefNotifNube = _prefNotifNube.asStateFlow()
 
-    private val _prefNotifSistema = MutableStateFlow(sharedPrefs.getBoolean("pref_notif_sistema", true))
+    private val _prefNotifSistema = MutableStateFlow(true)
     val prefNotifSistema = _prefNotifSistema.asStateFlow()
 
+    fun getLocalPreferences(): com.example.data.CloudPreferences {
+        return com.example.data.CloudPreferences(
+            prefTheme = _prefTheme.value,
+            prefNotifActividades = _prefNotifActividades.value,
+            prefNotifNovedades = _prefNotifNovedades.value,
+            prefNotifNube = _prefNotifNube.value,
+            prefNotifSistema = _prefNotifSistema.value
+        )
+    }
+
+    fun applyCloudPreferences(prefs: com.example.data.CloudPreferences) {
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().apply {
+            putString("pref_theme$suffix", prefs.prefTheme)
+            putBoolean("pref_notif_actividades$suffix", prefs.prefNotifActividades)
+            putBoolean("pref_notif_novedades$suffix", prefs.prefNotifNovedades)
+            putBoolean("pref_notif_nube$suffix", prefs.prefNotifNube)
+            putBoolean("pref_notif_sistema$suffix", prefs.prefNotifSistema)
+        }.apply()
+        _prefTheme.value = prefs.prefTheme
+        _prefNotifActividades.value = prefs.prefNotifActividades
+        _prefNotifNovedades.value = prefs.prefNotifNovedades
+        _prefNotifNube.value = prefs.prefNotifNube
+        _prefNotifSistema.value = prefs.prefNotifSistema
+    }
+
+    fun uploadPrefsToCloud() {
+        val url = _cloudSyncUrl.value
+        if (url.isNotBlank()) {
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    com.example.data.api.CloudSyncClient.uploadPreferences(url, getLocalPreferences())
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload preferences to cloud: ${e.localizedMessage}")
+                }
+            }
+        }
+    }
+
+    fun updatePrefTheme(theme: String) {
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putString("pref_theme$suffix", theme).apply()
+        _prefTheme.value = theme
+        uploadPrefsToCloud()
+    }
+
     fun updatePrefNotifActividades(enabled: Boolean) {
-        sharedPrefs.edit().putBoolean("pref_notif_actividades", enabled).apply()
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putBoolean("pref_notif_actividades$suffix", enabled).apply()
         _prefNotifActividades.value = enabled
+        uploadPrefsToCloud()
     }
 
     fun updatePrefNotifNovedades(enabled: Boolean) {
-        sharedPrefs.edit().putBoolean("pref_notif_novedades", enabled).apply()
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putBoolean("pref_notif_novedades$suffix", enabled).apply()
         _prefNotifNovedades.value = enabled
+        uploadPrefsToCloud()
     }
 
     fun updatePrefNotifNube(enabled: Boolean) {
-        sharedPrefs.edit().putBoolean("pref_notif_nube", enabled).apply()
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putBoolean("pref_notif_nube$suffix", enabled).apply()
         _prefNotifNube.value = enabled
+        uploadPrefsToCloud()
     }
 
     fun updatePrefNotifSistema(enabled: Boolean) {
-        sharedPrefs.edit().putBoolean("pref_notif_sistema", enabled).apply()
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putBoolean("pref_notif_sistema$suffix", enabled).apply()
         _prefNotifSistema.value = enabled
+        uploadPrefsToCloud()
     }
 
     fun triggerSystemNotification(title: String, message: String) {
@@ -188,9 +259,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
-        CloudSyncClient.onNewUrlGenerated = { newUrl ->
-            updateCloudSyncUrl(newUrl)
-        }
         val database = AppDatabase.getDatabase(application)
         val dao = database.appDao()
         repository = AppRepository(dao)
@@ -216,14 +284,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.checkAndSeedData()
         }
+
+        viewModelScope.launch {
+            _loggedInMember.collect { member ->
+                loadUserPreferences(member?.email)
+            }
+        }
     }
 
     // Login logic
     fun login(email: String, password: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        val remoteMembers = CloudSyncClient.fetchMembers(url)
+                        if (remoteMembers.isNotEmpty()) {
+                            val localMembers = repository.allMembers.first()
+                            val mergedMembers = (localMembers + remoteMembers).distinctBy { it.email.trim().lowercase() }
+                            repository.overwriteMembers(mergedMembers)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to pre-fetch members from cloud: ${e.localizedMessage}")
+                }
+            }
+
             val member = repository.getMemberByEmailDirect(email.trim().lowercase())
-            if (member != null && member.password == password) {
-                _loggedInMember.value = member
+            val hashedInput = SecurityUtils.hashPasswordSha256(password)
+            if (member != null && (member.password == password || member.password == hashedInput)) {
+                // If the user's password was in plaintext, seamlessly secure it in the database
+                if (member.password == password) {
+                    val migratedMember = member.copy(password = hashedInput)
+                    _loggedInMember.value = migratedMember
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        repository.updateMember(migratedMember)
+                    }
+                    autoSync()
+                } else {
+                    _loggedInMember.value = member
+                }
+                syncWithCloud { success, message ->
+                    Log.d("AppViewModel", "Immediate login sync completed. Success: $success, Message: $message")
+                }
                 onResult(true)
             } else {
                 onResult(false)
@@ -257,9 +361,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (existing != null) {
                 viewModelScope.launch(Dispatchers.Main) { onResult(false) }
             } else {
+                val hashedPassword = SecurityUtils.hashPasswordSha256(password)
                 val newMember = Member(
                     email = trimmedEmail,
-                    password = password,
+                    password = hashedPassword,
                     fullName = fullName,
                     role = role,
                     country = country,
@@ -286,6 +391,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     triggerSystemNotification("Miembro Creado 📋", "Admin creó cuenta para: $fullName")
                 }
                 viewModelScope.launch(Dispatchers.Main) { onResult(true) }
+                autoSync()
             }
         }
     }
@@ -309,6 +415,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (_prefNotifSistema.value) {
                 triggerSystemNotification("Perfil Actualizado ✍️", "Se editó el carné de ${member.fullName}")
             }
+            autoSync()
         }
     }
 
@@ -329,6 +436,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (_prefNotifSistema.value) {
                 triggerSystemNotification("Miembro Removido 🗑️", "Se eliminó el acceso de: $email")
             }
+            autoSync()
         }
     }
 
@@ -360,7 +468,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         country: String,
         category: String,
         organizer: String,
-        eventType: String = "Voluntariado"
+        eventType: String = "Voluntariado",
+        isMandatory: Boolean = false
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val activity = EcoActivity(
@@ -371,7 +480,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 country = country,
                 category = category,
                 organizer = organizer,
-                eventType = eventType
+                eventType = eventType,
+                isMandatory = isMandatory
             )
             repository.insertActivity(activity)
 
@@ -386,12 +496,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (_prefNotifActividades.value) {
                 triggerSystemNotification("Nueva Actividad 🌾", "${calendarPrefix}Se programó '$title' para el $date de junio")
             }
+            autoSync()
         }
     }
 
     fun deleteActivity(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteActivity(id)
+            autoSync()
         }
     }
 
@@ -409,11 +521,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     _loggedInMember.value = updatedMember
                 }
             } else {
+                val ectSdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+                ectSdf.timeZone = java.util.TimeZone.getTimeZone("America/Guayaquil")
+                val ecuadorTimeStr = ectSdf.format(Date()) + " (Ec)"
                 val enrollment = EcoEnrollment(
                     activityId = activity.id,
                     activityTitle = activity.title,
                     memberEmail = member.email,
-                    memberName = member.fullName
+                    memberName = member.fullName,
+                    enrolledAt = ecuadorTimeStr
                 )
                 repository.insertEnrollment(enrollment)
                 // Add 15 points to member
@@ -436,6 +552,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     triggerSystemNotification("Inscripción en Actividad 🌿", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
                 }
             }
+            autoSync()
         }
     }
 
@@ -449,6 +566,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = activity.copy(isUserRegistered = !activity.isUserRegistered)
                 repository.updateActivity(updated)
             }
+        }
+    }
+
+    fun updateActivity(activity: EcoActivity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.updateActivity(activity)
+            autoSync()
         }
     }
 
@@ -490,6 +614,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.updateProfile(profile)
             }
+            autoSync()
         }
     }
 
@@ -500,6 +625,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = active.copy(photoUri = photoUri)
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                autoSync()
             }
         }
     }
@@ -518,6 +644,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     repository.updateProfile(updatedProfile)
                 }
             }
+            autoSync()
         }
     }
 
@@ -535,10 +662,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     repository.updateProfile(updatedProfile)
                 }
             }
+            autoSync()
         }
     }
 
-    fun publishLocalArticle(title: String, content: String, category: String, region: String) {
+    fun updateLocalArticle(article: EcoArticle) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.insertArticle(article)
+            autoSync()
+        }
+    }
+
+    fun publishLocalArticle(title: String, content: String, category: String, region: String, photoUri: String? = null) {
         viewModelScope.launch(Dispatchers.IO) {
             val newArticle = EcoArticle(
                 title = title,
@@ -546,7 +681,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 category = category,
                 region = region,
                 publishDate = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date()),
-                isAiGenerated = false
+                isAiGenerated = false,
+                photoUri = photoUri
             )
             repository.insertArticle(newArticle)
 
@@ -574,12 +710,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (_prefNotifNovedades.value) {
                 triggerSystemNotification("Artículos y Novedades 📰", "Se publicó el artículo: $title")
             }
+            autoSync()
         }
     }
 
     fun deleteArticle(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.deleteArticle(id)
+            autoSync()
         }
     }
 
@@ -681,6 +819,87 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _aiState.value = AiState.None
     }
 
+    private suspend fun performCloudMerge(url: String): String {
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val member = _loggedInMember.value
+            val userEmail = member?.email ?: ""
+
+            // 1. Fetch remote data from cloud
+            val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { emptyList() }
+            val remoteMembers = try { CloudSyncClient.fetchMembers(url) } catch (e: Exception) { emptyList() }
+            val remoteNotifications = try { CloudSyncClient.fetchNotifications(url) } catch (e: Exception) { emptyList() }
+            val remoteEnrollments = try { CloudSyncClient.fetchEnrollments(url) } catch (e: Exception) { emptyList() }
+            val remoteArticles = try { CloudSyncClient.fetchArticles(url) } catch (e: Exception) { emptyList() }
+
+            // 2. Fetch local data from Room
+            val localActivities = repository.allActivities.first()
+            val localMembers = repository.allMembers.first()
+            val localNotifications = repository.allNotifications.first()
+            val localEnrollments = repository.allEnrollments.first()
+            val localArticles = repository.allArticles.first()
+
+            // 3. Bidirectional merge
+            // Merging Activities
+            val mergedActivities = (localActivities + remoteActivities).distinctBy { 
+                "${it.title.trim().lowercase()}_${it.date.trim()}" 
+            }
+
+            // Merging Members (local version has priority for matching email, to preserve points/updates edited on this device)
+            val mergedMembers = (localMembers + remoteMembers).distinctBy { 
+                it.email.trim().lowercase() 
+            }
+
+            // Merging Enrollments
+            val mergedEnrollments = (localEnrollments + remoteEnrollments).distinctBy { 
+                "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+            }
+
+            // Merging Articles/Reports
+            val mergedArticles = (localArticles + remoteArticles).distinctBy { 
+                "${it.title.trim().lowercase()}_${it.publishDate.trim()}" 
+            }
+
+            // Merging Notifications
+            val mergedNotifications = (localNotifications + remoteNotifications).distinctBy { 
+                "${it.title.trim().lowercase()}_${it.timestamp.trim()}" 
+            }
+
+            // 4. Upload merged data back to Cloud
+            CloudSyncClient.uploadActivities(url, mergedActivities)
+            CloudSyncClient.uploadMembers(url, mergedMembers)
+            CloudSyncClient.uploadNotifications(url, mergedNotifications)
+            CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
+            CloudSyncClient.uploadArticles(url, mergedArticles)
+            
+            // Sync preferences
+            val remotePrefs = try { CloudSyncClient.fetchPreferences(url) } catch (e: Exception) { null }
+            if (remotePrefs != null) {
+                kotlinx.coroutines.withContext(Dispatchers.Main) {
+                    applyCloudPreferences(remotePrefs)
+                }
+            } else {
+                CloudSyncClient.uploadPreferences(url, getLocalPreferences())
+            }
+
+            // 5. Overwrite local Room database with the merged data
+            repository.overwriteActivities(mergedActivities)
+            repository.overwriteMembers(mergedMembers)
+            repository.overwriteNotifications(mergedNotifications)
+            repository.overwriteEnrollments(mergedEnrollments)
+            repository.overwriteArticles(mergedArticles)
+
+            // Update active session profile if userEmail is set and profile exists
+            if (userEmail.isNotBlank()) {
+                val freshSelf = mergedMembers.find { it.email.trim().lowercase() == userEmail.trim().lowercase() }
+                if (freshSelf != null) {
+                    _loggedInMember.value = freshSelf
+                }
+            }
+
+            "Sincronización Completa ✓ Sincronizados ${mergedArticles.size} artículos, ${mergedActivities.size} eventos, ${mergedMembers.size} perfiles y ${mergedEnrollments.size} inscripciones."
+        }
+    }
+
     fun syncWithCloud(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
         val url = _cloudSyncUrl.value
         if (url.isBlank()) {
@@ -692,65 +911,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _syncState.value = SyncState.Syncing
             try {
-                val member = _loggedInMember.value
-                val isCoordinator = member?.email == "coordinador@je.org" || member?.isAdmin == true
-
-                val result = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    if (isCoordinator) {
-                        // --- COORD / ADMIN MODE: Push state, pull remote joins ---
-                        val localActivities = repository.allActivities.first()
-                        val localMembers = repository.allMembers.first()
-                        val localNotifications = repository.allNotifications.first()
-                        val localEnrollments = repository.allEnrollments.first()
-
-                        val remoteEnrollments = CloudSyncClient.fetchEnrollments(url)
-                        val mergedEnrollments = (localEnrollments + remoteEnrollments).distinctBy { "${it.activityId}_${it.memberEmail}" }
-
-                        val actSuccess = CloudSyncClient.uploadActivities(url, localActivities)
-                        val memSuccess = CloudSyncClient.uploadMembers(url, localMembers)
-                        val notSuccess = CloudSyncClient.uploadNotifications(url, localNotifications)
-                        val enrolSuccess = CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
-
-                        if (actSuccess && memSuccess && notSuccess && enrolSuccess) {
-                            repository.overwriteEnrollments(mergedEnrollments)
-                            "Consola Publicada ✓ ${localActivities.size} actividades y ${localMembers.size} miembros actualizados en la nube."
-                        } else {
-                            throw IllegalStateException("Fallo de red al publicar Consola.")
-                        }
-                    } else {
-                        // --- REGULAR MEMBER MODE: Pull state, merge/push own joins ---
-                        val remoteActivities = CloudSyncClient.fetchActivities(url)
-                        val remoteMembers = CloudSyncClient.fetchMembers(url)
-                        val remoteNotifications = CloudSyncClient.fetchNotifications(url)
-                        val remoteEnrollments = CloudSyncClient.fetchEnrollments(url)
-
-                        if (remoteActivities.isEmpty() && remoteMembers.isEmpty()) {
-                            throw IllegalStateException("La base de datos en la nube está vacía.\n\nEl Coordinador del proyecto debe ingresar con su cuenta (coordinador@je.org o administrador) y presionar 'Sincronizar Consola Ahora' desde el Panel de Administración primero para inicializar la base de datos.")
-                        }
-
-                        val localEnrollments = repository.allEnrollments.first()
-                        val userEmail = member?.email ?: ""
-                        val myEnrollments = localEnrollments.filter { it.memberEmail == userEmail }
-                        val mergedEnrollments = (remoteEnrollments + myEnrollments).distinctBy { "${it.activityId}_${it.memberEmail}" }
-
-                        if (myEnrollments.isNotEmpty()) {
-                            CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
-                        }
-
-                        repository.overwriteActivities(remoteActivities)
-                        repository.overwriteMembers(remoteMembers)
-                        repository.overwriteNotifications(remoteNotifications)
-                        repository.overwriteEnrollments(mergedEnrollments)
-
-                        val freshSelf = remoteMembers.find { it.email == userEmail }
-                        if (freshSelf != null) {
-                            _loggedInMember.value = freshSelf
-                        }
-
-                        "Sincronizado ✓ Cargados ${remoteActivities.size} eventos y ${remoteMembers.size} perfiles."
-                    }
-                }
-
+                val result = performCloudMerge(url)
                 _syncState.value = SyncState.Success(result)
                 val notif = EcoNotification(
                     title = "Nube Sincronizada ☁️",
@@ -774,5 +935,170 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetSyncState() {
         _syncState.value = SyncState.Idle
+    }
+
+    fun autoSync() {
+        val url = _cloudSyncUrl.value
+        if (url.isBlank()) return
+        viewModelScope.launch {
+            try {
+                performCloudMerge(url)
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "AutoSync background failed silently: ${e.localizedMessage}")
+            }
+        }
+    }
+
+    private fun convertImageToBase64(filePath: String): String? {
+        return try {
+            val file = java.io.File(filePath)
+            if (!file.exists()) return null
+            val options = android.graphics.BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            android.graphics.BitmapFactory.decodeFile(filePath, options)
+            val targetSize = 600
+            var scale = 1
+            while (options.outWidth / scale / 2 >= targetSize && options.outHeight / scale / 2 >= targetSize) {
+                scale *= 2
+            }
+            val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                inSampleSize = scale
+            }
+            val bitmap = android.graphics.BitmapFactory.decodeFile(filePath, decodeOptions) ?: return null
+            val outputStream = java.io.ByteArrayOutputStream()
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, outputStream)
+            val byteArray = outputStream.toByteArray()
+            android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    fun sendBugReportDirectly(
+        comment: String,
+        photoPath: String?,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val member = _loggedInMember.value
+                val id = UUID.randomUUID().toString().take(8)
+                val timestampStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                
+                // 1. Send the report directly via FormSubmit.co AJAX to target email
+                val okHttpClient = okhttp3.OkHttpClient()
+                val formBuilder = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
+                
+                formBuilder.addFormDataPart("ID de Reporte", id)
+                formBuilder.addFormDataPart("Reportero", member?.fullName ?: "Anonymous Member")
+                formBuilder.addFormDataPart("Email de Contacto", member?.email ?: "anonymous@example.com")
+                formBuilder.addFormDataPart("Fallo Reportado / Comentario", comment)
+                formBuilder.addFormDataPart("Fecha y Hora", timestampStr)
+                formBuilder.addFormDataPart("_subject", "🐛 Reporte de Bug de ${member?.fullName ?: "Usuario"}")
+                formBuilder.addFormDataPart("_captcha", "false")
+                formBuilder.addFormDataPart("_template", "box")
+
+                if (!photoPath.isNullOrEmpty()) {
+                    val file = java.io.File(photoPath)
+                    if (file.exists()) {
+                        val fileMediaType = "image/*".toMediaType()
+                        formBuilder.addFormDataPart("attachment", file.name, okhttp3.RequestBody.create(fileMediaType, file))
+                    }
+                }
+
+                val formRequestBody = formBuilder.build()
+                val formRequest = okhttp3.Request.Builder()
+                    .url("https://formsubmit.co/ajax/je.react21@gmail.com")
+                    .post(formRequestBody)
+                    .header("Accept", "application/json")
+                    .build()
+
+                var emailSentSuccessfully = false
+                var emailErrorMessage = ""
+
+                try {
+                    okHttpClient.newCall(formRequest).execute().use { formResponse ->
+                        if (formResponse.isSuccessful) {
+                            emailSentSuccessfully = true
+                        } else {
+                            val errorBody = formResponse.body?.string() ?: ""
+                            emailErrorMessage = "FormSubmit HTTP ${formResponse.code} ($errorBody)"
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    emailErrorMessage = e.localizedMessage ?: "Fallo de conexión al servidor de correo"
+                }
+
+                if (!emailSentSuccessfully) {
+                    launch(Dispatchers.Main) {
+                        onError("No se pudo enviar el correo: $emailErrorMessage. Por favor comprueba tu conexión a internet.")
+                    }
+                    return@launch
+                }
+
+                // 2. Database Backup (Firebase / KVDB)
+                var base64Img: String? = null
+                if (!photoPath.isNullOrEmpty()) {
+                    base64Img = convertImageToBase64(photoPath)
+                }
+
+                val payloadMap = mutableMapOf<String, Any?>(
+                    "id" to id,
+                    "reporterEmail" to (member?.email ?: "anonymous@example.com"),
+                    "reporterName" to (member?.fullName ?: "Anonymous Member"),
+                    "comment" to comment,
+                    "timestamp" to timestampStr,
+                    "photoBase64" to base64Img,
+                    "status" to "Abierto",
+                    "targetEmail" to "je.react21@gmail.com"
+                )
+
+                val moshi = com.squareup.moshi.Moshi.Builder().build()
+                val type = com.squareup.moshi.Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
+                val jsonPayload = moshi.adapter<Map<String, Any?>>(type).toJson(payloadMap)
+
+                val rawUrl = _cloudSyncUrl.value
+                var trimmed = rawUrl.trim().removeSuffix("/")
+                val parts = trimmed.split("?", limit = 2)
+                val basePath = parts[0]
+                val queryString = if (parts.size > 1) "?" + parts[1] else ""
+                val firebaseEndpoint = if (basePath.contains("kvdb.io", ignoreCase = true)) {
+                    "$basePath/bugs/$id$queryString"
+                } else {
+                    "$basePath/bugs/$id.json$queryString"
+                }
+
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val requestBody = jsonPayload.toRequestBody(mediaType)
+                val request = okhttp3.Request.Builder()
+                    .url(firebaseEndpoint)
+                    .put(requestBody)
+                    .header("Content-Type", "application/json")
+                    .build()
+
+                try {
+                    okHttpClient.newCall(request).execute().use { response ->
+                        // Intentionally run backup silently or log successful insertion
+                        Log.d("BugReport", "Direct email sent and database backup complete. Sync status: ${response.isSuccessful}")
+                    }
+                } catch (dbEx: Exception) {
+                    dbEx.printStackTrace() // Backup error shouldn't fail the successful email submit
+                }
+
+                launch(Dispatchers.Main) {
+                    onSuccess()
+                }
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+                launch(Dispatchers.Main) {
+                    onError(e.localizedMessage ?: "Fallo de conexión directo")
+                }
+            }
+        }
     }
 }

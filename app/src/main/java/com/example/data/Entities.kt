@@ -16,7 +16,8 @@ data class EcoActivity(
     val category: String,
     val organizer: String,
     val isUserRegistered: Boolean = false,
-    val eventType: String = "Voluntariado" // Event modes: "Talleres", "Voluntariado", "Charlas"
+    val eventType: String = "Voluntariado", // Event modes: "Talleres", "Voluntariado", "Charlas"
+    val isMandatory: Boolean = false
 )
 
 @Entity(tableName = "carnet_profile")
@@ -90,6 +91,16 @@ data class EcoArticle(
     val region: String,
     val publishDate: String,
     val isFeatured: Boolean = false,
-    val isAiGenerated: Boolean = false
+    val isAiGenerated: Boolean = false,
+    val photoUri: String? = null
+)
+
+@JsonClass(generateAdapter = true)
+data class CloudPreferences(
+    val prefTheme: String = "system",
+    val prefNotifActividades: Boolean = true,
+    val prefNotifNovedades: Boolean = true,
+    val prefNotifNube: Boolean = true,
+    val prefNotifSistema: Boolean = true
 )
 

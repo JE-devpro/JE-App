@@ -68,6 +68,11 @@ class AppRepository(private val appDao: AppDao) {
         appDao.insertEnrollments(list)
     }
 
+    suspend fun overwriteArticles(list: List<EcoArticle>) {
+        appDao.clearAllArticles()
+        appDao.insertArticles(list)
+    }
+
     suspend fun checkAndSeedData() {
         // 1. Seed Profile if empty (deprecated fallback, Member table is the primary now)
         val currentProfile = appDao.getProfileDirect()
@@ -92,7 +97,7 @@ class AppRepository(private val appDao: AppDao) {
             val seedMembers = listOf(
                 Member(
                     email = "coordinador@je.org",
-                    password = "JE2026",
+                    password = SecurityUtils.hashPasswordSha256("JE2026"),
                     fullName = "Director General JE-App",
                     role = "Director General",
                     association = "Central Jóvenes y Ecosistemas",
@@ -104,7 +109,7 @@ class AppRepository(private val appDao: AppDao) {
                 ),
                 Member(
                     email = "miembro1@je.org",
-                    password = "miembro1",
+                    password = SecurityUtils.hashPasswordSha256("miembro1"),
                     fullName = "Sofía Moreno",
                     role = "Coordinadora Regional",
                     association = "Jóvenes y Ecosistemas Latinoamérica",
@@ -115,7 +120,7 @@ class AppRepository(private val appDao: AppDao) {
                 ),
                 Member(
                     email = "miembro2@je.org",
-                    password = "miembro2",
+                    password = SecurityUtils.hashPasswordSha256("miembro2"),
                     fullName = "Mateo Silva",
                     role = "Embajador JE-RAM",
                     association = "Jóvenes y Ecosistemas Latinoamérica",
@@ -126,7 +131,7 @@ class AppRepository(private val appDao: AppDao) {
                 ),
                 Member(
                     email = "miembro3@je.org",
-                    password = "miembro3",
+                    password = SecurityUtils.hashPasswordSha256("miembro3"),
                     fullName = "Lucía Paz",
                     role = "Líder JE-Mental",
                     association = "Jóvenes y Ecosistemas Latinoamérica",

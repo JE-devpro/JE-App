@@ -48,6 +48,9 @@ interface AppDao {
     @Query("DELETE FROM articles WHERE id = :id")
     suspend fun deleteArticleById(id: Int)
 
+    @Query("DELETE FROM articles")
+    suspend fun clearAllArticles()
+
     // Members accounts (registered by Admin only)
     @Query("SELECT * FROM members ORDER BY fullName ASC")
     fun getAllMembers(): Flow<List<Member>>
