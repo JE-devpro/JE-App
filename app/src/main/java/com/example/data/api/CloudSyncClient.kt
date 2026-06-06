@@ -20,7 +20,8 @@ data class CloudDatabase(
     val notifications: List<EcoNotification> = emptyList(),
     val enrollments: List<EcoEnrollment> = emptyList(),
     val articles: List<EcoArticle> = emptyList(),
-    val preferences: com.example.data.CloudPreferences? = null
+    val preferences: com.example.data.CloudPreferences? = null,
+    val userPreferences: Map<String, com.example.data.CloudPreferences>? = emptyMap()
 )
 
 object CloudSyncClient {
@@ -57,6 +58,10 @@ object CloudSyncClient {
         Types.newParameterizedType(List::class.java, EcoArticle::class.java)
     )
     private val preferencesAdapter = moshi.adapter(com.example.data.CloudPreferences::class.java)
+    private val memberAdapter = moshi.adapter(Member::class.java)
+    private val userPreferencesMapAdapter = moshi.adapter<Map<String, com.example.data.CloudPreferences>>(
+        Types.newParameterizedType(Map::class.java, String::class.java, com.example.data.CloudPreferences::class.java)
+    )
 
     private fun isJsonBlob(url: String): Boolean {
         return url.contains("jsonblob.com", ignoreCase = true)
@@ -109,7 +114,18 @@ object CloudSyncClient {
             val preferencesJson = if (root.containsKey("preferences")) moshi.adapter(Any::class.java).toJson(root["preferences"]) else null
             val preferences = if (preferencesJson != null) parsePreferences(preferencesJson) else null
             
-            CloudDatabase(activities, members, notifications, enrollments, articles, preferences)
+            val userPrefsJson = if (root.containsKey("userPreferences")) moshi.adapter(Any::class.java).toJson(root["userPreferences"]) else null
+            val userPreferences = if (userPrefsJson != null) {
+                try {
+                    userPreferencesMapAdapter.fromJson(userPrefsJson) ?: emptyMap()
+                } catch (e: Exception) {
+                    emptyMap()
+                }
+            } else {
+                emptyMap()
+            }
+            
+            CloudDatabase(activities, members, notifications, enrollments, articles, preferences, userPreferences)
         } catch (e: Exception) {
             Log.e(TAG, "Error decoding database from jsonblob JSON", e)
             CloudDatabase()
@@ -131,14 +147,27 @@ object CloudSyncClient {
         db.preferences?.let {
             map["preferences"] = it
         }
+        db.userPreferences?.let {
+            map["userPreferences"] = it
+        }
         val type = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
         return moshi.adapter<Map<String, Any>>(type).toJson(map)
     }
 
-    private fun fetchFullDatabase(baseUrl: String): CloudDatabase {
-        val trimmed = baseUrl.trim().removeSuffix("/")
-        Log.d(TAG, "Fetching full database from $trimmed")
-        val request = Request.Builder().url(trimmed).get().build()
+    fun fetchFullDatabase(baseUrl: String): CloudDatabase {
+        var trimmed = baseUrl.trim().removeSuffix("/")
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            trimmed = "https://$trimmed"
+        }
+        val urlToFetch = if (isJsonBlob(trimmed)) {
+            trimmed
+        } else if (trimmed.contains("kvdb.io", ignoreCase = true)) {
+            trimmed
+        } else {
+            if (trimmed.endsWith(".json")) trimmed else "$trimmed/.json"
+        }
+        Log.d(TAG, "Fetching full database from $urlToFetch")
+        val request = Request.Builder().url(urlToFetch).get().build()
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
@@ -159,12 +188,22 @@ object CloudSyncClient {
     }
 
     private fun uploadFullDatabase(baseUrl: String, db: CloudDatabase): Boolean {
-        val trimmed = baseUrl.trim().removeSuffix("/")
-        Log.d(TAG, "Uploading full database to $trimmed")
+        var trimmed = baseUrl.trim().removeSuffix("/")
+        if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            trimmed = "https://$trimmed"
+        }
+        val urlToUpload = if (isJsonBlob(trimmed)) {
+            trimmed
+        } else if (trimmed.contains("kvdb.io", ignoreCase = true)) {
+            trimmed
+        } else {
+            if (trimmed.endsWith(".json")) trimmed else "$trimmed/.json"
+        }
+        Log.d(TAG, "Uploading full database to $urlToUpload")
         try {
             val json = serializeDatabase(db)
             val request = Request.Builder()
-                .url(trimmed)
+                .url(urlToUpload)
                 .put(json.toRequestBody(jsonMediaType))
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json")
@@ -250,17 +289,47 @@ object CloudSyncClient {
         }
     }
 
-    fun uploadMembers(baseUrl: String, members: List<Member>): Boolean {
+    fun fetchSingleMember(baseUrl: String, email: String): Member? {
         if (isJsonBlob(baseUrl)) {
             val db = fetchFullDatabase(baseUrl)
-            val updated = db.copy(members = members)
+            return db.members.find { it.email.trim().lowercase() == email.trim().lowercase() }
+        }
+        val safeKey = com.example.data.SecurityUtils.hashPasswordSha256(email.trim().lowercase()).take(16)
+        val url = formatUrl(baseUrl, "members/$safeKey")
+        Log.d(TAG, "Fetching single member from $url")
+        val request = Request.Builder().url(url).get().build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 404) return null
+                    throwNetworkError(response.code, "obtener perfil de miembro")
+                }
+                val bodyString = response.body?.string() ?: return null
+                if (bodyString == "null") return null
+                val encMember = memberAdapter.fromJson(bodyString) ?: return null
+                return com.example.data.SecurityUtils.decryptMember(encMember, cloudSecurityKey)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetchSingleMember", e)
+            wrapException("obtener perfil de miembro", e)
+        }
+    }
+
+    fun uploadMembers(baseUrl: String, members: List<Member>): Boolean {
+        val cleanMembers = members.map { it.copy(email = it.email.trim().lowercase()) }
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updated = db.copy(members = cleanMembers)
             return uploadFullDatabase(baseUrl, updated)
         }
         val url = formatUrl(baseUrl, "members")
-        Log.d(TAG, "Uploading ${members.size} members to $url")
+        Log.d(TAG, "Uploading ${cleanMembers.size} members to $url")
         try {
-            val encryptedMembers = members.map { com.example.data.SecurityUtils.encryptMember(it, cloudSecurityKey) }
-            val map = encryptedMembers.associateBy { com.example.data.SecurityUtils.hashPasswordSha256(it.email).take(16) }
+            val map = cleanMembers.associate { m ->
+                val safeKey = com.example.data.SecurityUtils.hashPasswordSha256(m.email).take(16)
+                val encrypted = com.example.data.SecurityUtils.encryptMember(m, cloudSecurityKey)
+                safeKey to encrypted
+            }
             val json = membersMapAdapter.toJson(map)
             val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
             client.newCall(request).execute().use { response ->
@@ -272,6 +341,74 @@ object CloudSyncClient {
         } catch (e: Exception) {
             Log.e(TAG, "Exception uploadMembers", e)
             wrapException("subir perfiles de miembros", e)
+        }
+    }
+
+    fun uploadSingleMember(baseUrl: String, member: Member): Boolean {
+        val cleanEmail = member.email.trim().lowercase()
+        val cleanMember = member.copy(email = cleanEmail)
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updatedMembers = db.members.toMutableList()
+            val index = updatedMembers.indexOfFirst { it.email.trim().lowercase() == cleanEmail }
+            if (index != -1) {
+                updatedMembers[index] = cleanMember
+            } else {
+                updatedMembers.add(cleanMember)
+            }
+            val updated = db.copy(members = updatedMembers)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val safeKey = com.example.data.SecurityUtils.hashPasswordSha256(cleanEmail).take(16)
+        val url = formatUrl(baseUrl, "members/$safeKey")
+        Log.d(TAG, "Uploading single member to $url")
+        try {
+            val encryptedMember = com.example.data.SecurityUtils.encryptMember(cleanMember, cloudSecurityKey)
+            val json = memberAdapter.toJson(encryptedMember)
+            val request = Request.Builder()
+                .url(url)
+                .put(json.toRequestBody(jsonMediaType))
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throwNetworkError(response.code, "subir perfil de miembro individual")
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception uploadSingleMember", e)
+            wrapException("subir perfil de miembro individual", e)
+        }
+    }
+
+    fun deleteSingleMember(baseUrl: String, email: String): Boolean {
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updatedMembers = db.members.filterNot { it.email.trim().lowercase() == email.trim().lowercase() }
+            val updated = db.copy(members = updatedMembers)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val safeKey = com.example.data.SecurityUtils.hashPasswordSha256(email.trim().lowercase()).take(16)
+        val url = formatUrl(baseUrl, "members/$safeKey")
+        Log.d(TAG, "Deleting single member from $url")
+        try {
+            val request = Request.Builder()
+                .url(url)
+                .delete()
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code != 404) {
+                        throwNetworkError(response.code, "eliminar perfil de miembro individual")
+                    }
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception deleteSingleMember", e)
+            wrapException("eliminar perfil de miembro individual", e)
         }
     }
 
@@ -515,11 +652,18 @@ object CloudSyncClient {
         }
     }
 
-    fun fetchPreferences(baseUrl: String): com.example.data.CloudPreferences? {
+    fun fetchPreferences(baseUrl: String, email: String?): com.example.data.CloudPreferences? {
+        val safeKey = if (!email.isNullOrBlank()) com.example.data.SecurityUtils.hashPasswordSha256(email.trim().lowercase()).take(16) else ""
         if (isJsonBlob(baseUrl)) {
-            return fetchFullDatabase(baseUrl).preferences
+            val db = fetchFullDatabase(baseUrl)
+            return if (safeKey.isNotEmpty() && db.userPreferences?.containsKey(safeKey) == true) {
+                db.userPreferences[safeKey]
+            } else {
+                db.preferences
+            }
         }
-        val url = formatUrl(baseUrl, "preferences")
+        val path = if (safeKey.isNotEmpty()) "preferences_$safeKey" else "preferences"
+        val url = formatUrl(baseUrl, path)
         Log.d(TAG, "Fetching preferences from $url")
         val request = Request.Builder().url(url).get().build()
         try {
@@ -538,13 +682,23 @@ object CloudSyncClient {
         }
     }
 
-    fun uploadPreferences(baseUrl: String, prefs: com.example.data.CloudPreferences): Boolean {
+    fun uploadPreferences(baseUrl: String, prefs: com.example.data.CloudPreferences, email: String?): Boolean {
+        val safeKey = if (!email.isNullOrBlank()) com.example.data.SecurityUtils.hashPasswordSha256(email.trim().lowercase()).take(16) else ""
         if (isJsonBlob(baseUrl)) {
             val db = fetchFullDatabase(baseUrl)
-            val updated = db.copy(preferences = prefs)
+            val updatedUserPrefs = (db.userPreferences ?: emptyMap()).toMutableMap()
+            if (safeKey.isNotEmpty()) {
+                updatedUserPrefs[safeKey] = prefs
+            }
+            val updated = if (safeKey.isNotEmpty()) {
+                db.copy(userPreferences = updatedUserPrefs)
+            } else {
+                db.copy(preferences = prefs)
+            }
             return uploadFullDatabase(baseUrl, updated)
         }
-        val url = formatUrl(baseUrl, "preferences")
+        val path = if (safeKey.isNotEmpty()) "preferences_$safeKey" else "preferences"
+        val url = formatUrl(baseUrl, path)
         Log.d(TAG, "Uploading preferences to $url")
         try {
             val json = preferencesAdapter.toJson(prefs)

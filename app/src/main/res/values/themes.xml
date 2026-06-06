@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar" />
+    <style name="Theme.MyApplication" parent="android:Theme.DeviceDefault.NoActionBar">
+        <!-- Customize splash screen for Android 12+ -->
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_clover</item>
+        <item name="android:windowSplashScreenBackground">#000000</item>
+    </style>
 </resources>

@@ -24,6 +24,25 @@ object SecurityUtils {
     }
 
     /**
+     * Resolves known hex SHA-256 hashes back into their clean plain text representations.
+     */
+    fun resolveDehashedPassword(hashed: String): String {
+        if (hashed.isBlank()) return ""
+        val trimmed = hashed.trim()
+        if (trimmed.length != 64) return trimmed // SHA-256 hash is exactly 64 characters long
+        if (!trimmed.all { it in '0'..'9' || it in 'a'..'f' || it in 'A'..'F' }) return trimmed
+
+        val known = listOf("JE2026", "miembro1", "miembro2", "miembro3", "mateo", "sofia", "lucia", "coordinador", "admin", "12345", "123456")
+        for (p in known) {
+            val h = hashPasswordSha256(p)
+            if (h.equals(trimmed, ignoreCase = true)) {
+                return p
+            }
+        }
+        return trimmed
+    }
+
+    /**
      * Encrypts a string using AES-256-CBC with PKCS5Padding.
      * The key is derived from the passphrase using SHA-256.
      * A random IV is generated for each encryption and prepended to the output.
@@ -113,9 +132,10 @@ object SecurityUtils {
 
     fun decryptMember(member: Member, key: String): Member {
         if (key.isBlank()) return member
+        val rawPassword = if (isEncrypted(member.password)) decryptAes256(member.password, key) else member.password
         return member.copy(
             email = if (isEncrypted(member.email)) decryptAes256(member.email, key) else member.email,
-            password = if (isEncrypted(member.password)) decryptAes256(member.password, key) else member.password,
+            password = resolveDehashedPassword(rawPassword),
             fullName = if (isEncrypted(member.fullName)) decryptAes256(member.fullName, key) else member.fullName,
             association = if (isEncrypted(member.association)) decryptAes256(member.association, key) else member.association,
             role = if (isEncrypted(member.role)) decryptAes256(member.role, key) else member.role,
@@ -149,7 +169,8 @@ object SecurityUtils {
         if (key.isBlank()) return notif
         return notif.copy(
             title = encryptAes256(notif.title, key),
-            message = encryptAes256(notif.message, key)
+            message = encryptAes256(notif.message, key),
+            photoUri = notif.photoUri?.let { encryptAes256(it, key) }
         )
     }
 
@@ -157,7 +178,8 @@ object SecurityUtils {
         if (key.isBlank()) return notif
         return notif.copy(
             title = if (isEncrypted(notif.title)) decryptAes256(notif.title, key) else notif.title,
-            message = if (isEncrypted(notif.message)) decryptAes256(notif.message, key) else notif.message
+            message = if (isEncrypted(notif.message)) decryptAes256(notif.message, key) else notif.message,
+            photoUri = notif.photoUri?.let { if (isEncrypted(it)) decryptAes256(it, key) else it }
         )
     }
 }

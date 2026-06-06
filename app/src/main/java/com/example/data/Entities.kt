@@ -78,7 +78,8 @@ data class EcoNotification(
     val title: String,
     val message: String,
     val timestamp: String,
-    val isRead: Boolean = false
+    val isRead: Boolean = false,
+    val photoUri: String? = null
 )
 
 @Entity(tableName = "articles")

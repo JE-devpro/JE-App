@@ -80,13 +80,13 @@ interface AppDao {
     @Query("SELECT * FROM enrollments WHERE activityId = :activityId")
     fun getEnrollmentsByActivityFlow(activityId: Int): Flow<List<EcoEnrollment>>
 
-    @Query("SELECT * FROM enrollments WHERE activityId = :activityId AND memberEmail = :memberEmail LIMIT 1")
+    @Query("SELECT * FROM enrollments WHERE activityId = :activityId AND LOWER(TRIM(memberEmail)) = LOWER(TRIM(:memberEmail)) LIMIT 1")
     suspend fun getEnrollmentDirect(activityId: Int, memberEmail: String): EcoEnrollment?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEnrollment(enrollment: EcoEnrollment)
 
-    @Query("DELETE FROM enrollments WHERE activityId = :activityId AND memberEmail = :memberEmail")
+    @Query("DELETE FROM enrollments WHERE activityId = :activityId AND LOWER(TRIM(memberEmail)) = LOWER(TRIM(:memberEmail))")
     suspend fun deleteEnrollment(activityId: Int, memberEmail: String)
 
     // Administration Notifications / Alerts

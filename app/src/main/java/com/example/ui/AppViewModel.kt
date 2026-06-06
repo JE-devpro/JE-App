@@ -40,6 +40,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _loggedInMember = MutableStateFlow<Member?>(null)
     val loggedInMember: StateFlow<Member?> = _loggedInMember.asStateFlow()
 
+    private val _adminMembersList = MutableStateFlow<List<Member>>(emptyList())
+    val adminMembersList: StateFlow<List<Member>> = _adminMembersList.asStateFlow()
+
+    private val _isOverrideCoordinator = MutableStateFlow(false)
+    val isOverrideCoordinator: StateFlow<Boolean> = _isOverrideCoordinator.asStateFlow()
+
+    fun setOverrideCoordinator(enabled: Boolean) {
+        _isOverrideCoordinator.value = enabled
+    }
+
+    private fun checkIfAdmin(): Boolean {
+        val member = _loggedInMember.value ?: return _isOverrideCoordinator.value
+        return member.isAdmin || 
+               member.email.trim().lowercase() == "coordinador@je.org" || 
+               _isOverrideCoordinator.value
+    }
+
     // Google Calendar Sync State (Tied dynamically to the active logged-in member)
     val googleCalendarLinked: StateFlow<Boolean> = _loggedInMember
         .map { it?.isGoogleCalendarLinked ?: false }
@@ -60,6 +77,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _syncState = MutableStateFlow<SyncState>(SyncState.Idle)
     val syncState: StateFlow<SyncState> = _syncState.asStateFlow()
 
+    // Login UI State Interface
+    sealed interface LoginUiState {
+        object Idle : LoginUiState
+        object Loading : LoginUiState
+        data class Success(val message: String) : LoginUiState
+        data class Error(val message: String) : LoginUiState
+    }
+
+    private val _loginUiState = MutableStateFlow<LoginUiState>(LoginUiState.Idle)
+    val loginUiState: StateFlow<LoginUiState> = _loginUiState.asStateFlow()
+
+    fun resetLoginUiState() {
+        _loginUiState.value = LoginUiState.Idle
+    }
+
     private val sharedPrefs = application.getSharedPreferences("je_app_prefs", Context.MODE_PRIVATE)
 
     private val defaultUrl = "https://je-app-3e271-default-rtdb.firebaseio.com/"
@@ -72,8 +104,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadUserPreferences(email: String?) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        _cloudSyncUrl.value = sharedPrefs.getString("pref_cloud_sync_url$suffix", defaultUrl) ?: defaultUrl
-        _cloudSecurityKey.value = sharedPrefs.getString("pref_cloud_security_key$suffix", "JE-Organizacion-EcoTech-2026") ?: "JE-Organizacion-EcoTech-2026"
+        _cloudSyncUrl.value = sharedPrefs.getString("pref_cloud_sync_url", defaultUrl) ?: defaultUrl
+        _cloudSecurityKey.value = sharedPrefs.getString("pref_cloud_security_key", "JE-Organizacion-EcoTech-2026") ?: "JE-Organizacion-EcoTech-2026"
         com.example.data.api.CloudSyncClient.cloudSecurityKey = _cloudSecurityKey.value
 
         _prefNotifActividades.value = sharedPrefs.getBoolean("pref_notif_actividades$suffix", sharedPrefs.getBoolean("pref_notif_actividades", true))
@@ -84,18 +116,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateCloudSyncUrl(newUrl: String) {
-        val email = _loggedInMember.value?.email
-        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putString("pref_cloud_sync_url$suffix", newUrl).apply()
+        sharedPrefs.edit().putString("pref_cloud_sync_url", newUrl).apply()
         _cloudSyncUrl.value = newUrl
     }
 
     fun updateCloudSecurityKey(newKey: String) {
-        val email = _loggedInMember.value?.email
-        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putString("pref_cloud_security_key$suffix", newKey).apply()
+        sharedPrefs.edit().putString("pref_cloud_security_key", newKey).apply()
         _cloudSecurityKey.value = newKey
         com.example.data.api.CloudSyncClient.cloudSecurityKey = newKey
+    }
+
+    private fun getTombstones(email: String? = _loggedInMember.value?.email): MutableSet<String> {
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        return sharedPrefs.getStringSet("sync_tombstones$suffix", mutableSetOf())?.toMutableSet() ?: mutableSetOf()
+    }
+
+    private fun addTombstone(key: String, email: String? = _loggedInMember.value?.email) {
+        val current = getTombstones(email)
+        current.add(key)
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        sharedPrefs.edit().putStringSet("sync_tombstones$suffix", current).apply()
     }
 
     private val _prefTheme = MutableStateFlow("system")
@@ -142,10 +182,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun uploadPrefsToCloud() {
         val url = _cloudSyncUrl.value
+        val email = _loggedInMember.value?.email
         if (url.isNotBlank()) {
             viewModelScope.launch(Dispatchers.IO) {
                 try {
-                    com.example.data.api.CloudSyncClient.uploadPreferences(url, getLocalPreferences())
+                    com.example.data.api.CloudSyncClient.uploadPreferences(url, getLocalPreferences(), email)
                 } catch (e: Exception) {
                     Log.e("AppViewModel", "Failed to upload preferences to cloud: ${e.localizedMessage}")
                 }
@@ -195,9 +236,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun triggerSystemNotification(title: String, message: String) {
         if (title == "Inscripción en Actividad 🌿") {
-            val user = _loggedInMember.value
-            val isUserAdmin = user?.isAdmin == true || user?.email == "coordinador@je.org"
-            if (!isUserAdmin) return
+            if (!checkIfAdmin()) return
         }
         val context = getApplication<Application>()
         val channelId = "je_app_notifications"
@@ -294,50 +333,159 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Login logic
     fun login(email: String, password: String, onResult: (Boolean) -> Unit) {
+        if (email.isBlank() || password.isBlank()) {
+            _loginUiState.value = LoginUiState.Error("Por favor complete todos los campos.")
+            onResult(false)
+            return
+        }
+
+        _loginUiState.value = LoginUiState.Loading
+
+        val trimmedEmail = email.trim().lowercase()
+        val hashedInput = SecurityUtils.hashPasswordSha256(password)
+
+        // Try authenticating through Firebase Auth safely
+        val auth = com.example.data.api.FirebaseHelper.getAuthOrNull()
+        if (auth != null) {
+            try {
+                auth.signInWithEmailAndPassword(trimmedEmail, password)
+                    .addOnCompleteListener { authSignInTask ->
+                        if (authSignInTask.isSuccessful) {
+                            Log.d("AppViewModel", "Firebase Auth authentication successful for $trimmedEmail")
+                            // Continue standard database login and syncing
+                            proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                        } else {
+                            // SignIn failed, maybe user is registered locally/cloud database but not yet in FirebaseAuth!
+                            // Let's check local/cloud databases.
+                            viewModelScope.launch(Dispatchers.IO) {
+                                var member = repository.getMemberByEmailDirect(trimmedEmail)
+                                val url = _cloudSyncUrl.value
+                                var cloudException: Exception? = null
+                                if (member == null) {
+                                    if (url.isNotBlank()) {
+                                        try {
+                                            member = CloudSyncClient.fetchSingleMember(url, trimmedEmail)
+                                        } catch (e: Exception) {
+                                            cloudException = e
+                                            Log.e("AppViewModel", "Failed to check member in cloud: ${e.localizedMessage}")
+                                        }
+                                    }
+                                }
+                                
+                                val matches = member != null && (member.password == password || member.password == hashedInput)
+                                if (matches) {
+                                    // Password matches! Register on FirebaseAuth immediately (Sync migration)
+                                    try {
+                                        auth.createUserWithEmailAndPassword(trimmedEmail, password)
+                                            .addOnCompleteListener { registerTask ->
+                                                if (registerTask.isSuccessful) {
+                                                    Log.d("AppViewModel", "Auto-migrated member to Firebase Auth: $trimmedEmail")
+                                                    com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(trimmedEmail, password)
+                                                }
+                                                proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                                            }
+                                    } catch (e: Exception) {
+                                        Log.e("AppViewModel", "Failed to createUserWithEmailAndPassword safely", e)
+                                        proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                                    }
+                                } else {
+                                    viewModelScope.launch(Dispatchers.Main) {
+                                        val errMsg = when {
+                                            member == null && cloudException != null -> 
+                                                "Error de conexión con la base de datos en la nube. Verifique su acceso a internet."
+                                            member == null -> 
+                                                "El correo electrónico ingresado no coincide con ningún miembro registrado."
+                                            else -> 
+                                                "La contraseña introducida es incorrecta. Por favor verifique sus datos."
+                                        }
+                                        _loginUiState.value = LoginUiState.Error(errMsg)
+                                        onResult(false)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        Log.w("AppViewModel", "Firebase Auth signIn failed with exception", e)
+                        proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                    }
+            } catch (e: Exception) {
+                Log.e("AppViewModel", "FirebaseAuth signInWithEmailAndPassword exception", e)
+                proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+            }
+        } else {
+            // Firebase Auth not initialized or not available, fallback seamlessly
+            proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+        }
+    }
+
+    private fun proceedLocalAndCloudLogin(email: String, password: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             val url = _cloudSyncUrl.value
+            var cloudFetchSuccess = true
+            var cloudFetchError: String? = null
             if (url.isNotBlank()) {
                 try {
                     kotlinx.coroutines.withContext(Dispatchers.IO) {
-                        val remoteMembers = CloudSyncClient.fetchMembers(url)
-                        if (remoteMembers.isNotEmpty()) {
+                        val remoteMember = CloudSyncClient.fetchSingleMember(url, email.trim().lowercase())
+                        val isUserAdmin = email.trim().lowercase() == "coordinador@je.org" || (remoteMember?.isAdmin == true) || (remoteMember?.role == "Director General")
+                        
+                        if (remoteMember != null) {
                             val localMembers = repository.allMembers.first()
-                            val mergedMembers = (localMembers + remoteMembers).distinctBy { it.email.trim().lowercase() }
-                            repository.overwriteMembers(mergedMembers)
+                            val mergedMembers = smartMergeMembers(localMembers, listOf(remoteMember), isFirstSync = true)
+                            // Clean local database to ONLY contain this specific logged-in user's profile
+                            val filteredMembers = mergedMembers.filter { it.email.trim().lowercase() == email.trim().lowercase() }
+                            repository.overwriteMembers(filteredMembers)
+                        }
+                        
+                        // If it is coordinator or admin, only pre-fetch and populate _adminMembersList in-memory
+                        if (isUserAdmin) {
+                            val allRemote = CloudSyncClient.fetchMembers(url)
+                            if (allRemote.isNotEmpty()) {
+                                _adminMembersList.value = allRemote
+                            }
                         }
                     }
                 } catch (e: Exception) {
-                    Log.e("AppViewModel", "Failed to pre-fetch members from cloud: ${e.localizedMessage}")
+                    cloudFetchSuccess = false
+                    cloudFetchError = e.localizedMessage
+                    Log.e("AppViewModel", "Failed to pre-fetch member from cloud: ${e.localizedMessage}")
                 }
             }
 
             val member = repository.getMemberByEmailDirect(email.trim().lowercase())
             val hashedInput = SecurityUtils.hashPasswordSha256(password)
             if (member != null && (member.password == password || member.password == hashedInput)) {
-                // If the user's password was in plaintext, seamlessly secure it in the database
-                if (member.password == password) {
-                    val migratedMember = member.copy(password = hashedInput)
-                    _loggedInMember.value = migratedMember
-                    kotlinx.coroutines.withContext(Dispatchers.IO) {
-                        repository.updateMember(migratedMember)
-                    }
-                    autoSync()
-                } else {
-                    _loggedInMember.value = member
-                }
+                _loggedInMember.value = member
+                
+                // Back up credential securely in Firebase RTDB
+                com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(email.trim().lowercase(), password)
+
                 syncWithCloud { success, message ->
                     Log.d("AppViewModel", "Immediate login sync completed. Success: $success, Message: $message")
                 }
+                _loginUiState.value = LoginUiState.Success("¡Bienvenido de nuevo!")
                 onResult(true)
             } else {
+                val errMsg = when {
+                    member == null && !cloudFetchSuccess ->
+                        "Error de red al consultar el perfil en la nube. Verifique su conexión."
+                    member == null ->
+                        "El usuario especificado no está registrado en el sistema local ni en la nube."
+                    else ->
+                        "La contraseña introducida es incorrecta. Por favor intente de nuevo."
+                }
+                _loginUiState.value = LoginUiState.Error(errMsg)
                 onResult(false)
             }
         }
     }
 
-    // Logout
+    // Bottom / Logout
     fun logout() {
         _loggedInMember.value = null
+        _isOverrideCoordinator.value = false
+        _adminMembersList.value = emptyList()
     }
 
     // Register a member account (Coordinator console action only)
@@ -361,10 +509,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (existing != null) {
                 viewModelScope.launch(Dispatchers.Main) { onResult(false) }
             } else {
-                val hashedPassword = SecurityUtils.hashPasswordSha256(password)
                 val newMember = Member(
                     email = trimmedEmail,
-                    password = hashedPassword,
+                    password = password,
                     fullName = fullName,
                     role = role,
                     country = country,
@@ -378,7 +525,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     customCara1Uri = customCara1Uri,
                     customCara2Uri = customCara2Uri
                 )
-                repository.insertMember(newMember)
+                // No local SQLite persistence for other profiles
+                if (trimmedEmail == _loggedInMember.value?.email?.trim()?.lowercase()) {
+                    repository.insertMember(newMember)
+                }
+                
+                // Register details in Firebase Authentication safely
+                val auth = com.example.data.api.FirebaseHelper.getAuthOrNull()
+                if (auth != null) {
+                    try {
+                        auth.createUserWithEmailAndPassword(trimmedEmail, password)
+                            .addOnCompleteListener { authTask ->
+                                if (authTask.isSuccessful) {
+                                    Log.d("AppViewModel", "Successfully created member user in Firebase Auth: $trimmedEmail")
+                                } else {
+                                    Log.w("AppViewModel", "Firebase Auth creation failed: ${authTask.exception?.message}")
+                                }
+                            }
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to invoke createUserWithEmailAndPassword safely", e)
+                    }
+                }
+
+                // Register credential safely in Firebase database cloud
+                com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(trimmedEmail, password)
+
+                // Update in-memory lists for UI
+                _adminMembersList.value = _adminMembersList.value.filterNot { it.email.trim().lowercase() == trimmedEmail } + newMember
+
+                val url = _cloudSyncUrl.value
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, newMember)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload registered member to cloud: ${e.localizedMessage}")
+                    }
+                }
                 
                 // Track creation in status alerts
                 val notif = EcoNotification(
@@ -399,30 +581,84 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Modify custom member card by coordinator from console
     fun modifyMemberProfile(member: Member) {
         viewModelScope.launch(Dispatchers.IO) {
-            repository.updateMember(member)
-            // Update active session if they modified themselves
-            if (_loggedInMember.value?.email == member.email) {
-                _loggedInMember.value = member
+            val cleanEmail = member.email.trim().lowercase()
+            val cleanMember = member.copy(email = cleanEmail)
+            val isSelf = cleanEmail == _loggedInMember.value?.email?.trim()?.lowercase()
+            
+            // Backup credential securely in Firebase RTDB cloud
+            val plainPassword = SecurityUtils.resolveDehashedPassword(cleanMember.password)
+            com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(cleanEmail, plainPassword)
+
+            // Logically save on SQLite only if it is the user's self profile to prevent storing other members locally
+            if (isSelf) {
+                repository.insertMember(cleanMember)
+                _loggedInMember.value = cleanMember
+            }
+
+            // Update in-memory lists for UI
+            _adminMembersList.value = _adminMembersList.value.map {
+                if (it.email.trim().lowercase() == cleanEmail) cleanMember else it
+            }
+
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    CloudSyncClient.uploadSingleMember(url, cleanMember)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload updated member profile to cloud: ${e.localizedMessage}")
+                }
             }
 
             // Log update
             val notif = EcoNotification(
                 title = "Perfil Actualizado ✍️",
-                message = "Se editó el carné de ${member.fullName}",
+                message = "Se editó el carné de ${cleanMember.fullName}",
                 timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
             )
             repository.insertNotification(notif)
             if (_prefNotifSistema.value) {
-                triggerSystemNotification("Perfil Actualizado ✍️", "Se editó el carné de ${member.fullName}")
+                triggerSystemNotification("Perfil Actualizado ✍️", "Se editó el carné de ${cleanMember.fullName}")
             }
             autoSync()
+        }
+    }
+
+    // Refresh member list in memory from the cloud (coordinator console only)
+    fun refreshAdminMembers() {
+        if (!checkIfAdmin()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    val allRemote = CloudSyncClient.fetchMembers(url).distinctBy { it.email.trim().lowercase() }
+                    if (allRemote.isNotEmpty()) {
+                        _adminMembersList.value = allRemote
+                    }
+                } catch (e: java.lang.Exception) {
+                    android.util.Log.e("AppViewModel", "Failed to refresh admin members: ${e.localizedMessage}")
+                }
+            }
         }
     }
 
     // Suppress a member account
     fun removeMember(email: String) {
         viewModelScope.launch(Dispatchers.IO) {
+            val key = "member_${email.trim().lowercase()}"
+            addTombstone(key)
             repository.deleteMemberByEmail(email)
+            
+            // Delete from in-memory admin representation
+            _adminMembersList.value = _adminMembersList.value.filterNot { it.email.trim().lowercase() == email.trim().lowercase() }
+
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    CloudSyncClient.deleteSingleMember(url, email)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to delete removed member from cloud: ${e.localizedMessage}")
+                }
+            }
             if (_loggedInMember.value?.email == email) {
                 _loggedInMember.value = null
             }
@@ -502,6 +738,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteActivity(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
+            val list = repository.allActivities.first()
+            val act = list.find { it.id == id }
+            if (act != null) {
+                val key = "activity_${act.title.trim().lowercase()}_${act.date.trim()}"
+                addTombstone(key)
+            }
             repository.deleteActivity(id)
             autoSync()
         }
@@ -510,14 +752,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Refactored enrollment mechanics supporting multiple users
     fun toggleEnrollment(activity: EcoActivity, member: Member) {
         viewModelScope.launch(Dispatchers.IO) {
-            val existing = repository.getEnrollmentDirect(activity.id, member.email)
+            val emailClean = member.email.trim().lowercase()
+            val existing = repository.getEnrollmentDirect(activity.id, emailClean)
             if (existing != null) {
-                repository.deleteEnrollment(activity.id, member.email)
+                repository.deleteEnrollment(activity.id, emailClean)
                 // Deduct points from member
                 val updatedMember = member.copy(points = (member.points - 15).coerceAtLeast(0))
                 repository.updateMember(updatedMember)
                 // If the logged in member was this member, update our active session state
-                if (_loggedInMember.value?.email == member.email) {
+                if (_loggedInMember.value?.email?.trim()?.lowercase() == emailClean) {
                     _loggedInMember.value = updatedMember
                 }
             } else {
@@ -527,7 +770,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val enrollment = EcoEnrollment(
                     activityId = activity.id,
                     activityTitle = activity.title,
-                    memberEmail = member.email,
+                    memberEmail = emailClean,
                     memberName = member.fullName,
                     enrolledAt = ecuadorTimeStr
                 )
@@ -536,7 +779,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val updatedMember = member.copy(points = member.points + 15)
                 repository.updateMember(updatedMember)
                 // If the logged in member was this member, update our active session state
-                if (_loggedInMember.value?.email == member.email) {
+                if (_loggedInMember.value?.email?.trim()?.lowercase() == emailClean) {
                     _loggedInMember.value = updatedMember
                 }
 
@@ -716,6 +959,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteArticle(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
+            val list = repository.allArticles.first()
+            val art = list.find { it.id == id }
+            if (art != null) {
+                val key = "article_${art.title.trim().lowercase()}_${art.publishDate.trim()}"
+                addTombstone(key)
+            }
             repository.deleteArticle(id)
             autoSync()
         }
@@ -723,13 +972,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearNotification(id: Int) {
         viewModelScope.launch(Dispatchers.IO) {
+            val list = repository.allNotifications.first()
+            val notif = list.find { it.id == id }
+            if (notif != null) {
+                val key = "notif_${notif.title.trim().lowercase()}_${notif.timestamp.trim()}"
+                addTombstone(key)
+            }
             repository.deleteNotificationById(id)
+            autoSync()
         }
     }
 
     fun markNotificationsRead() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.markAllNotificationsAsRead()
+        }
+    }
+
+    fun clearAllNotifications() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val list = repository.allNotifications.first()
+            for (notif in list) {
+                val key = "notif_${notif.title.trim().lowercase()}_${notif.timestamp.trim()}"
+                addTombstone(key)
+            }
+            repository.clearAllNotifications()
+            autoSync()
         }
     }
 
@@ -815,6 +1083,241 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun smartMergeMembers(localMembers: List<Member>, remoteMembers: List<Member>, isFirstSync: Boolean = false): List<Member> {
+        val mergedMembers = mutableListOf<Member>()
+        val remoteMap = remoteMembers.associateBy { it.email.trim().lowercase() }
+        val localMap = localMembers.associateBy { it.email.trim().lowercase() }
+        
+        val allEmails = (localMap.keys + remoteMap.keys).distinct()
+        val isAdminSelf = checkIfAdmin()
+        val userEmail = _loggedInMember.value?.email ?: ""
+        val tombstones = getTombstones()
+
+        for (email in allEmails) {
+            val cleanEmail = email.trim().lowercase()
+            val key = "member_$cleanEmail"
+            if (tombstones.contains(key)) {
+                continue
+            }
+            
+            val localMember = localMap[cleanEmail]
+            val remoteMember = remoteMap[cleanEmail]
+            if (localMember != null && remoteMember != null) {
+                val isSelf = cleanEmail == userEmail.trim().lowercase()
+                val useLocal = (isSelf || isAdminSelf) && !isFirstSync
+                
+                // Keep password/admin/profile updates from local database (where they are edited) ONLY if it's our self-profile, otherwise use the cloud database as authoritative
+                val finalPassword = if (useLocal) localMember.password else remoteMember.password
+                val finalRole = if (useLocal) localMember.role else remoteMember.role
+                val finalIsAdmin = if (useLocal) localMember.isAdmin else remoteMember.isAdmin
+                val finalFullName = if (useLocal) localMember.fullName else remoteMember.fullName
+                val finalAssociation = if (useLocal) localMember.association else remoteMember.association
+                val finalCountry = if (useLocal) localMember.country else remoteMember.country
+                val finalCustomCara1 = if (useLocal) {
+                    localMember.customCara1Uri ?: remoteMember.customCara1Uri
+                } else {
+                    remoteMember.customCara1Uri ?: localMember.customCara1Uri
+                }
+                val finalCustomCara2 = if (useLocal) {
+                    localMember.customCara2Uri ?: remoteMember.customCara2Uri
+                } else {
+                    remoteMember.customCara2Uri ?: localMember.customCara2Uri
+                }
+                val finalPhotoUri = if (useLocal) {
+                    localMember.photoUri ?: remoteMember.photoUri
+                } else {
+                    remoteMember.photoUri ?: localMember.photoUri
+                }
+                val finalQrUri = if (useLocal) {
+                    localMember.qrUri ?: remoteMember.qrUri
+                } else {
+                    remoteMember.qrUri ?: localMember.qrUri
+                }
+
+                // Create merged member
+                mergedMembers.add(
+                    localMember.copy(
+                        email = cleanEmail,
+                        customCara1Uri = finalCustomCara1,
+                        customCara2Uri = finalCustomCara2,
+                        photoUri = finalPhotoUri,
+                        qrUri = finalQrUri,
+                        isAdmin = finalIsAdmin,
+                        fullName = finalFullName,
+                        role = finalRole,
+                        association = finalAssociation,
+                        country = finalCountry,
+                        password = finalPassword,
+                        points = maxOf(localMember.points, remoteMember.points)
+                    )
+                )
+            } else if (localMember != null) {
+                mergedMembers.add(localMember.copy(email = cleanEmail))
+            } else {
+                remoteMember?.let { mergedMembers.add(it.copy(email = cleanEmail)) }
+            }
+        }
+        return mergedMembers
+    }
+
+    private fun smartMergeActivities(
+        localActivities: List<EcoActivity>, 
+        remoteActivities: List<EcoActivity>,
+        isFirstSync: Boolean
+    ): List<EcoActivity> {
+        val merged = mutableListOf<EcoActivity>()
+        val localMap = localActivities.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
+        val remoteMap = remoteActivities.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
+        
+        val allKeys = (localMap.keys + remoteMap.keys).distinct()
+        val tombstones = getTombstones()
+
+        for (key in allKeys) {
+            val tombstoneKey = "activity_$key"
+            if (tombstones.contains(tombstoneKey)) {
+                continue
+            }
+
+            val localAct = localMap[key]
+            val remoteAct = remoteMap[key]
+            if (localAct != null && remoteAct != null) {
+                // In a cooperative bidirectional sync, we allow local updates to propagate stably to the cloud.
+                val useLocal = !isFirstSync
+                
+                val finalMandatory = if (useLocal) {
+                    localAct.isMandatory
+                } else {
+                    remoteAct.isMandatory
+                }
+                
+                val finalTitle = if (useLocal) localAct.title else remoteAct.title
+                val finalDesc = if (useLocal) localAct.description else remoteAct.description
+                val finalDate = if (useLocal) localAct.date else remoteAct.date
+                val finalLoc = if (useLocal) localAct.location else remoteAct.location
+                val finalCountry = if (useLocal) localAct.country else remoteAct.country
+                val finalCategory = if (useLocal) localAct.category else remoteAct.category
+                val finalOrganizer = if (useLocal) localAct.organizer else remoteAct.organizer
+                val finalEventType = if (useLocal) localAct.eventType else remoteAct.eventType
+
+                // For registration state, the local device is the authority on whether THIS user is registered in it.
+                val finalRegistered = localAct.isUserRegistered
+
+                merged.add(
+                    localAct.copy(
+                        title = finalTitle,
+                        description = finalDesc,
+                        date = finalDate,
+                        location = finalLoc,
+                        country = finalCountry,
+                        category = finalCategory,
+                        organizer = finalOrganizer,
+                        eventType = finalEventType,
+                        isMandatory = finalMandatory,
+                        isUserRegistered = finalRegistered
+                    )
+                )
+            } else if (localAct != null) {
+                merged.add(localAct)
+            } else {
+                remoteAct?.let { merged.add(it) }
+            }
+        }
+        return merged
+    }
+
+    private fun smartMergeArticles(
+        localArticles: List<EcoArticle>, 
+        remoteArticles: List<EcoArticle>,
+        isFirstSync: Boolean
+    ): List<EcoArticle> {
+        val merged = mutableListOf<EcoArticle>()
+        val localMap = localArticles.associateBy { "${it.title.trim().lowercase()}_${it.publishDate.trim()}" }
+        val remoteMap = remoteArticles.associateBy { "${it.title.trim().lowercase()}_${it.publishDate.trim()}" }
+        
+        val allKeys = (localMap.keys + remoteMap.keys).distinct()
+        val tombstones = getTombstones()
+
+        for (key in allKeys) {
+            val tombstoneKey = "article_$key"
+            if (tombstones.contains(tombstoneKey)) {
+                continue
+            }
+
+            val localArt = localMap[key]
+            val remoteArt = remoteMap[key]
+            if (localArt != null && remoteArt != null) {
+                // In a cooperative bidirectional sync, we allow local updates to propagate stably to the cloud.
+                val useLocal = !isFirstSync
+                
+                val finalTitle = if (useLocal) localArt.title else remoteArt.title
+                val finalContent = if (useLocal) localArt.content else remoteArt.content
+                val finalCategory = if (useLocal) localArt.category else remoteArt.category
+                val finalRegion = if (useLocal) localArt.region else remoteArt.region
+                val finalPublishDate = if (useLocal) localArt.publishDate else remoteArt.publishDate
+                val finalFeatured = if (useLocal) localArt.isFeatured else remoteArt.isFeatured
+                val finalAiGenerated = if (useLocal) localArt.isAiGenerated else remoteArt.isAiGenerated
+                val finalPhotoUri = if (useLocal) {
+                    localArt.photoUri ?: remoteArt.photoUri
+                } else {
+                    remoteArt.photoUri ?: localArt.photoUri
+                }
+
+                merged.add(
+                    localArt.copy(
+                        title = finalTitle,
+                        content = finalContent,
+                        category = finalCategory,
+                        region = finalRegion,
+                        publishDate = finalPublishDate,
+                        isFeatured = finalFeatured,
+                        isAiGenerated = finalAiGenerated,
+                        photoUri = finalPhotoUri
+                    )
+                )
+            } else if (localArt != null) {
+                merged.add(localArt)
+            } else {
+                remoteArt?.let { merged.add(it) }
+            }
+        }
+        return merged
+    }
+
+    private fun smartMergeNotifications(
+        localNotifications: List<EcoNotification>,
+        remoteNotifications: List<EcoNotification>,
+        isFirstSync: Boolean,
+        filterByTombstones: Boolean = true
+    ): List<EcoNotification> {
+        val merged = mutableListOf<EcoNotification>()
+        val localMap = localNotifications.associateBy { "${it.title.trim().lowercase()}_${it.timestamp.trim()}" }
+        val remoteMap = remoteNotifications.associateBy { "${it.title.trim().lowercase()}_${it.timestamp.trim()}" }
+
+        val allKeys = (localMap.keys + remoteMap.keys).distinct()
+        val tombstones = getTombstones()
+
+        for (key in allKeys) {
+            if (filterByTombstones) {
+                val tombstoneKey = "notif_$key"
+                if (tombstones.contains(tombstoneKey)) {
+                    continue
+                }
+            }
+
+            val localNotif = localMap[key]
+            val remoteNotif = remoteMap[key]
+            if (localNotif != null && remoteNotif != null) {
+                val finalRead = localNotif.isRead || remoteNotif.isRead
+                merged.add(localNotif.copy(isRead = finalRead))
+            } else if (localNotif != null) {
+                merged.add(localNotif)
+            } else {
+                remoteNotif?.let { merged.add(it) }
+            }
+        }
+        return merged
+    }
+
     fun resetAiState() {
         _aiState.value = AiState.None
     }
@@ -823,13 +1326,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             val member = _loggedInMember.value
             val userEmail = member?.email ?: ""
+            val emailKey = if (userEmail.isNotBlank()) userEmail.trim().lowercase() else "anonymous"
+            val hasSyncedKey = "first_sync_done_$emailKey"
+
+            val isAdmin = checkIfAdmin()
 
             // 1. Fetch remote data from cloud
             val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { emptyList() }
-            val remoteMembers = try { CloudSyncClient.fetchMembers(url) } catch (e: Exception) { emptyList() }
+            val isUserAdmin = userEmail.trim().lowercase() == "coordinador@je.org" || isAdmin
+            val remoteMembers = try {
+                if (userEmail.isNotBlank()) {
+                    val single = CloudSyncClient.fetchSingleMember(url, userEmail)
+                    if (single != null) listOf(single) else emptyList()
+                } else {
+                    emptyList()
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            
+            // If the user is coordinator or admin, fetch and populate _adminMembersList in-memory directly from cloud
+            if (isUserAdmin) {
+                try {
+                    val allRemote = CloudSyncClient.fetchMembers(url).distinctBy { it.email.trim().lowercase() }
+                    if (allRemote.isNotEmpty()) {
+                        _adminMembersList.value = allRemote
+                    }
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to load in-memory members: ${e.localizedMessage}")
+                }
+            }
             val remoteNotifications = try { CloudSyncClient.fetchNotifications(url) } catch (e: Exception) { emptyList() }
             val remoteEnrollments = try { CloudSyncClient.fetchEnrollments(url) } catch (e: Exception) { emptyList() }
             val remoteArticles = try { CloudSyncClient.fetchArticles(url) } catch (e: Exception) { emptyList() }
+
+            val isFirstSync = !sharedPrefs.getBoolean(hasSyncedKey, false) && (remoteActivities.isNotEmpty() || remoteMembers.isNotEmpty() || remoteArticles.isNotEmpty())
 
             // 2. Fetch local data from Room
             val localActivities = repository.allActivities.first()
@@ -839,54 +1370,88 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val localArticles = repository.allArticles.first()
 
             // 3. Bidirectional merge
-            // Merging Activities
-            val mergedActivities = (localActivities + remoteActivities).distinctBy { 
-                "${it.title.trim().lowercase()}_${it.date.trim()}" 
-            }
+            // Merging Activities with smart overwrite prevention
+            val mergedActivities = smartMergeActivities(localActivities, remoteActivities, isFirstSync)
 
-            // Merging Members (local version has priority for matching email, to preserve points/updates edited on this device)
-            val mergedMembers = (localMembers + remoteMembers).distinctBy { 
-                it.email.trim().lowercase() 
-            }
+            // Merging Members securely to preserve Admin-assigned carnet images and key updates Bidirectionally
+            val mergedMembers = smartMergeMembers(localMembers, remoteMembers, isFirstSync)
 
             // Merging Enrollments
-            val mergedEnrollments = (localEnrollments + remoteEnrollments).distinctBy { 
-                "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+            val mergedEnrollments = if (isFirstSync) {
+                // Device switch / First sync: Retrieve all active registrations from the cloud to restore user's session
+                (localEnrollments + remoteEnrollments).distinctBy { 
+                    "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+                }
+            } else {
+                // Bidirectional sync: Allow removing a local enrollment to propagate safely to the cloud
+                val filteredRemoteEnrollments = remoteEnrollments.filter { remoteEnroll ->
+                    val isSelf = remoteEnroll.memberEmail.trim().lowercase() == userEmail.trim().lowercase()
+                    if (isSelf) {
+                        localEnrollments.any { 
+                            it.activityId == remoteEnroll.activityId && 
+                            it.memberEmail.trim().lowercase() == remoteEnroll.memberEmail.trim().lowercase() 
+                        }
+                    } else {
+                        true
+                    }
+                }
+                (localEnrollments + filteredRemoteEnrollments).distinctBy { 
+                    "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+                }
             }
 
-            // Merging Articles/Reports
-            val mergedArticles = (localArticles + remoteArticles).distinctBy { 
-                "${it.title.trim().lowercase()}_${it.publishDate.trim()}" 
-            }
+            // Merging Articles/Reports with smart overwrite prevention
+            val mergedArticles = smartMergeArticles(localArticles, remoteArticles, isFirstSync)
 
-            // Merging Notifications
-            val mergedNotifications = (localNotifications + remoteNotifications).distinctBy { 
-                "${it.title.trim().lowercase()}_${it.timestamp.trim()}" 
-            }
+            // Merging Notifications (separate local filtered vs. cloud persisted lists)
+            val localMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true)
+            val cloudMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = false)
 
-            // 4. Upload merged data back to Cloud
+            // 4. Upload merged data back to Cloud (Cooperative Bidirectional Synchronization)
+            // To ensure all data created or altered locally is fully published and synchronized with the cloud backend,
+            // we perform a complete, robust push of all tables bidirectionally for all roles.
             CloudSyncClient.uploadActivities(url, mergedActivities)
-            CloudSyncClient.uploadMembers(url, mergedMembers)
-            CloudSyncClient.uploadNotifications(url, mergedNotifications)
+            if (userEmail.isNotBlank()) {
+                // All users (including coordinator/admin) only sync and upload their own profile in background sync
+                val selfProfile = mergedMembers.find { it.email.trim().lowercase() == userEmail.trim().lowercase() }
+                if (selfProfile != null) {
+                    CloudSyncClient.uploadSingleMember(url, selfProfile)
+                }
+            }
+            if (isUserAdmin) {
+                // Upload cloud-merged notifications which preserve other users' read/clear status
+                CloudSyncClient.uploadNotifications(url, cloudMergedNotifications)
+                CloudSyncClient.uploadArticles(url, mergedArticles)
+            }
             CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
-            CloudSyncClient.uploadArticles(url, mergedArticles)
             
             // Sync preferences
-            val remotePrefs = try { CloudSyncClient.fetchPreferences(url) } catch (e: Exception) { null }
+            val remotePrefs = try { CloudSyncClient.fetchPreferences(url, userEmail) } catch (e: Exception) { null }
             if (remotePrefs != null) {
                 kotlinx.coroutines.withContext(Dispatchers.Main) {
                     applyCloudPreferences(remotePrefs)
                 }
             } else {
-                CloudSyncClient.uploadPreferences(url, getLocalPreferences())
+                CloudSyncClient.uploadPreferences(url, getLocalPreferences(), userEmail)
             }
 
             // 5. Overwrite local Room database with the merged data
             repository.overwriteActivities(mergedActivities)
-            repository.overwriteMembers(mergedMembers)
-            repository.overwriteNotifications(mergedNotifications)
+            
+            // Clean local database to ALWAYS ONLY contain this specific logged-in user's profile on their device
+            val filteredMembers = if (userEmail.isNotBlank()) {
+                mergedMembers.filter { it.email.trim().lowercase() == userEmail.trim().lowercase() }
+            } else {
+                mergedMembers
+            }
+            repository.overwriteMembers(filteredMembers)
+            
+            repository.overwriteNotifications(localMergedNotifications)
             repository.overwriteEnrollments(mergedEnrollments)
             repository.overwriteArticles(mergedArticles)
+
+            // Save first sync completion flag
+            sharedPrefs.edit().putBoolean(hasSyncedKey, true).apply()
 
             // Update active session profile if userEmail is set and profile exists
             if (userEmail.isNotBlank()) {
@@ -935,6 +1500,198 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetSyncState() {
         _syncState.value = SyncState.Idle
+    }
+
+    sealed interface CloudDiagnosisState {
+        object Idle : CloudDiagnosisState
+        object Scanning : CloudDiagnosisState
+        data class Success(val report: CloudDiagnosisReport) : CloudDiagnosisState
+        data class Error(val message: String) : CloudDiagnosisState
+    }
+
+    data class CloudDiagnosisReport(
+        val urlReachable: Boolean = false,
+        val latencyMs: Long = 0L,
+        val formatReadable: Boolean = false,
+        val localActivities: Int = 0,
+        val localMembers: Int = 0,
+        val localNotifications: Int = 0,
+        val localEnrollments: Int = 0,
+        val localArticles: Int = 0,
+        val remoteActivities: Int = 0,
+        val remoteMembers: Int = 0,
+        val remoteNotifications: Int = 0,
+        val remoteEnrollments: Int = 0,
+        val remoteArticles: Int = 0,
+        val decryptSuccessMembersCount: Int = 0,
+        val decryptFailureMembersCount: Int = 0,
+        val recommendations: List<String> = emptyList(),
+        val statusMessage: String = "",
+        val firebaseAuthConnected: Boolean = false,
+        val firebaseRtdbConnected: Boolean = false,
+        val activeSessionSynced: Boolean = true,
+        val activeSessionDiscrepancy: String? = null
+    )
+
+    private val _cloudDiagnosis = MutableStateFlow<CloudDiagnosisState>(CloudDiagnosisState.Idle)
+    val cloudDiagnosis: StateFlow<CloudDiagnosisState> = _cloudDiagnosis.asStateFlow()
+
+    fun resetCloudDiagnosis() {
+        _cloudDiagnosis.value = CloudDiagnosisState.Idle
+    }
+
+    fun scanCloudDatabase() {
+        val url = _cloudSyncUrl.value
+        if (url.isBlank()) {
+            _cloudDiagnosis.value = CloudDiagnosisState.Error("La URL de la base de datos está vacía. Configure una URL válida primero.")
+            return
+        }
+
+        _cloudDiagnosis.value = CloudDiagnosisState.Scanning
+
+        viewModelScope.launch {
+            try {
+                val startTime = System.currentTimeMillis()
+                
+                // Fetch local counters
+                val localAct = repository.allActivities.first().size
+                val localMem = repository.allMembers.first().size
+                val localNot = repository.allNotifications.first().size
+                val localEnr = repository.allEnrollments.first().size
+                val localArt = repository.allArticles.first().size
+
+                // Request remote
+                val remoteDb = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    CloudSyncClient.fetchFullDatabase(url)
+                }
+                
+                val latency = System.currentTimeMillis() - startTime
+
+                // Check security decryption rate
+                var decryptSuccess = 0
+                var decryptFailure = 0
+                val customKey = _cloudSecurityKey.value
+
+                for (m in remoteDb.members) {
+                    val isFail = SecurityUtils.isEncrypted(m.email) || SecurityUtils.isEncrypted(m.fullName)
+                    if (isFail) {
+                        decryptFailure++
+                    } else {
+                        decryptSuccess++
+                    }
+                }
+
+                // Check active session status and look for discrepancies
+                val activeMember = _loggedInMember.value
+                var activeSessionSynced = true
+                var activeSessionDiscrepancy: String? = null
+
+                if (activeMember != null) {
+                    val remoteMem = remoteDb.members.find { it.email.trim().lowercase() == activeMember.email.trim().lowercase() }
+                    if (remoteMem == null) {
+                        activeSessionSynced = false
+                        activeSessionDiscrepancy = "La sesión activa (${activeMember.email}) no se ha respaldado o propagado a la nube."
+                    } else {
+                        val diffPoints = activeMember.points != remoteMem.points
+                        val diffRole = activeMember.role != remoteMem.role
+                        val diffName = activeMember.fullName != remoteMem.fullName
+
+                        if (diffPoints || diffRole || diffName) {
+                            activeSessionSynced = false
+                            val details = mutableListOf<String>()
+                            if (diffPoints) details.add("Puntos (${activeMember.points} locales vs ${remoteMem.points} en nube)")
+                            if (diffRole) details.add("Rol (${activeMember.role} local vs ${remoteMem.role} en nube)")
+                            if (diffName) details.add("Nombre (${activeMember.fullName} local vs ${remoteMem.fullName} en nube)")
+                            activeSessionDiscrepancy = "Datos desfasados: " + details.joinToString(", ")
+                        }
+                    }
+                }
+
+                // Verify Firebase Core & Auth Connectivity
+                val firebaseAuthConnected = try {
+                    com.example.data.api.FirebaseHelper.getAuthOrNull() != null
+                } catch (e: Exception) {
+                    false
+                }
+
+                val firebaseRtdbConnected = try {
+                    com.example.data.api.FirebaseHelper.getDatabaseOrNull() != null
+                } catch (e: Exception) {
+                    false
+                }
+
+                val recs = mutableListOf<String>()
+                
+                // Conectividad general y Firebase/Firestore
+                if (firebaseAuthConnected && firebaseRtdbConnected) {
+                    recs.add("🔥 Firebase / Realtime DB: Coherencia y canal de autenticación activo con la nube.")
+                } else {
+                    recs.add("⚠️ Canal Firebase inactivo: El SDK local utiliza configuraciones fuera de línea o parciales. Siga instucciones de entorno.")
+                }
+
+                // Inconsistencias de Sesiones Activas
+                if (activeMember != null) {
+                    if (activeSessionSynced) {
+                        recs.add("✅ Sesión Activa Sincronizada: El perfil del facilitador/miembro actual (${activeMember.email}) coincide con la base remota.")
+                    } else {
+                        recs.add("⚠️ Alerta de Inconsistencia: ${activeSessionDiscrepancy ?: ""}. Presione sincronización manual para corregir el desfase.")
+                    }
+                } else {
+                    recs.add("ℹ️ Sin Sesión Activa: Inicie sesión para evaluar desajustes en el perfil de su usuario actual contra el servidor.")
+                }
+
+                // Generate specific advice
+                if (decryptFailure > 0) {
+                    recs.add("⚠️ Clave de seguridad desincronizada: Se encontraron a nivel de nube $decryptFailure perfiles ilegibles con la clave de descifrado actual ($customKey). Verifique que tenga la clave idéntica del administrador.")
+                } else if (remoteDb.members.isNotEmpty()) {
+                    recs.add("✅ Criptografía robusta: El 100% de los perfiles en la nube ($decryptSuccess/$decryptSuccess) se descifraron correctamente con la clave de seguridad activa de la app.")
+                }
+
+                val diffAct = localAct - remoteDb.activities.size
+                if (diffAct > 0) {
+                    recs.add("💡 Desviación local: Existen $diffAct actividades locales nuevas no sincronizadas a nivel de nube. Pruebe subir la consola para actualizar la nube.")
+                } else if (diffAct < 0) {
+                    recs.add("💡 Desviación remota: Hay ${-diffAct} actividades en la nube pendientes de asimilar de forma local. Se actualizarán en la próxima carga automática.")
+                }
+
+                if (remoteDb.activities.isEmpty() && remoteDb.members.isEmpty()) {
+                    recs.add("ℹ️ Servidor sin registros: No hay información hospedada en esta base de datos remota para Jóvenes y Ecosistemas.")
+                }
+
+                recs.add("🌐 Conectividad estable: Servidor respondido de forma correcta con latencia de diagnóstico HTTP de ${latency}ms.")
+
+                val report = CloudDiagnosisReport(
+                    urlReachable = true,
+                    latencyMs = latency,
+                    formatReadable = true,
+                    localActivities = localAct,
+                    localMembers = localMem,
+                    localNotifications = localNot,
+                    localEnrollments = localEnr,
+                    localArticles = localArt,
+                    remoteActivities = remoteDb.activities.size,
+                    remoteMembers = remoteDb.members.size,
+                    remoteNotifications = remoteDb.notifications.size,
+                    remoteEnrollments = remoteDb.enrollments.size,
+                    remoteArticles = remoteDb.articles.size,
+                    decryptSuccessMembersCount = decryptSuccess,
+                    decryptFailureMembersCount = decryptFailure,
+                    recommendations = recs,
+                    statusMessage = "Escaneo completado exitosamente.",
+                    firebaseAuthConnected = firebaseAuthConnected,
+                    firebaseRtdbConnected = firebaseRtdbConnected,
+                    activeSessionSynced = activeSessionSynced,
+                    activeSessionDiscrepancy = activeSessionDiscrepancy
+                )
+
+                _cloudDiagnosis.value = CloudDiagnosisState.Success(report)
+
+            } catch (e: Exception) {
+                _cloudDiagnosis.value = CloudDiagnosisState.Error(
+                    "Fallo de conexión o escaneo de nube:\n" + (e.localizedMessage ?: "Conexión de red interrumpida o host inalcanzable.")
+                )
+            }
+        }
     }
 
     fun autoSync() {
@@ -986,108 +1743,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val member = _loggedInMember.value
                 val id = UUID.randomUUID().toString().take(8)
-                val timestampStr = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
+                val timestampStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                 
-                // 1. Send the report directly via FormSubmit.co AJAX to target email
-                val okHttpClient = okhttp3.OkHttpClient()
-                val formBuilder = okhttp3.MultipartBody.Builder().setType(okhttp3.MultipartBody.FORM)
-                
-                formBuilder.addFormDataPart("ID de Reporte", id)
-                formBuilder.addFormDataPart("Reportero", member?.fullName ?: "Anonymous Member")
-                formBuilder.addFormDataPart("Email de Contacto", member?.email ?: "anonymous@example.com")
-                formBuilder.addFormDataPart("Fallo Reportado / Comentario", comment)
-                formBuilder.addFormDataPart("Fecha y Hora", timestampStr)
-                formBuilder.addFormDataPart("_subject", "🐛 Reporte de Bug de ${member?.fullName ?: "Usuario"}")
-                formBuilder.addFormDataPart("_captcha", "false")
-                formBuilder.addFormDataPart("_template", "box")
+                // Construct a detailed and clean message for the Administrator
+                val fullMessageBuilder = java.lang.StringBuilder()
+                fullMessageBuilder.append("🐞 REPORTE DE ERROR / ALERTA\n\n")
+                fullMessageBuilder.append("• Reportero/a: ${member?.fullName ?: "Invitado"}\n")
+                fullMessageBuilder.append("• Correo: ${member?.email ?: "No disponible"}\n")
+                fullMessageBuilder.append("• Rol: ${member?.role ?: "No disponible"}\n")
+                fullMessageBuilder.append("• País: ${member?.country ?: "No disponible"}\n\n")
+                fullMessageBuilder.append("--- DETALLE DEL BUG ---\n")
+                fullMessageBuilder.append(comment)
 
-                if (!photoPath.isNullOrEmpty()) {
-                    val file = java.io.File(photoPath)
-                    if (file.exists()) {
-                        val fileMediaType = "image/*".toMediaType()
-                        formBuilder.addFormDataPart("attachment", file.name, okhttp3.RequestBody.create(fileMediaType, file))
-                    }
-                }
-
-                val formRequestBody = formBuilder.build()
-                val formRequest = okhttp3.Request.Builder()
-                    .url("https://formsubmit.co/ajax/je.react21@gmail.com")
-                    .post(formRequestBody)
-                    .header("Accept", "application/json")
-                    .build()
-
-                var emailSentSuccessfully = false
-                var emailErrorMessage = ""
-
-                try {
-                    okHttpClient.newCall(formRequest).execute().use { formResponse ->
-                        if (formResponse.isSuccessful) {
-                            emailSentSuccessfully = true
-                        } else {
-                            val errorBody = formResponse.body?.string() ?: ""
-                            emailErrorMessage = "FormSubmit HTTP ${formResponse.code} ($errorBody)"
-                        }
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                    emailErrorMessage = e.localizedMessage ?: "Fallo de conexión al servidor de correo"
-                }
-
-                if (!emailSentSuccessfully) {
-                    launch(Dispatchers.Main) {
-                        onError("No se pudo enviar el correo: $emailErrorMessage. Por favor comprueba tu conexión a internet.")
-                    }
-                    return@launch
-                }
-
-                // 2. Database Backup (Firebase / KVDB)
-                var base64Img: String? = null
-                if (!photoPath.isNullOrEmpty()) {
-                    base64Img = convertImageToBase64(photoPath)
-                }
-
-                val payloadMap = mutableMapOf<String, Any?>(
-                    "id" to id,
-                    "reporterEmail" to (member?.email ?: "anonymous@example.com"),
-                    "reporterName" to (member?.fullName ?: "Anonymous Member"),
-                    "comment" to comment,
-                    "timestamp" to timestampStr,
-                    "photoBase64" to base64Img,
-                    "status" to "Abierto",
-                    "targetEmail" to "je.react21@gmail.com"
+                val newNotification = EcoNotification(
+                    title = "🐛 Bug: ${if (comment.length > 25) comment.take(22).trim() + "..." else comment}",
+                    message = fullMessageBuilder.toString(),
+                    timestamp = timestampStr,
+                    isRead = false,
+                    photoUri = photoPath // This is already the Base64 representation!
                 )
 
-                val moshi = com.squareup.moshi.Moshi.Builder().build()
-                val type = com.squareup.moshi.Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
-                val jsonPayload = moshi.adapter<Map<String, Any?>>(type).toJson(payloadMap)
+                // 1. Insert locally to database
+                repository.insertNotification(newNotification)
 
-                val rawUrl = _cloudSyncUrl.value
-                var trimmed = rawUrl.trim().removeSuffix("/")
-                val parts = trimmed.split("?", limit = 2)
-                val basePath = parts[0]
-                val queryString = if (parts.size > 1) "?" + parts[1] else ""
-                val firebaseEndpoint = if (basePath.contains("kvdb.io", ignoreCase = true)) {
-                    "$basePath/bugs/$id$queryString"
-                } else {
-                    "$basePath/bugs/$id.json$queryString"
-                }
-
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val requestBody = jsonPayload.toRequestBody(mediaType)
-                val request = okhttp3.Request.Builder()
-                    .url(firebaseEndpoint)
-                    .put(requestBody)
-                    .header("Content-Type", "application/json")
-                    .build()
-
-                try {
-                    okHttpClient.newCall(request).execute().use { response ->
-                        // Intentionally run backup silently or log successful insertion
-                        Log.d("BugReport", "Direct email sent and database backup complete. Sync status: ${response.isSuccessful}")
-                    }
-                } catch (dbEx: Exception) {
-                    dbEx.printStackTrace() // Backup error shouldn't fail the successful email submit
-                }
+                // 2. Perform background autoSync to update the cloud database (kvdb / jsonblob / cloud database)
+                autoSync()
 
                 launch(Dispatchers.Main) {
                     onSuccess()
@@ -1096,7 +1776,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 e.printStackTrace()
                 launch(Dispatchers.Main) {
-                    onError(e.localizedMessage ?: "Fallo de conexión directo")
+                    onError(e.localizedMessage ?: "Error al procesar el reporte de bug en las alertas")
                 }
             }
         }

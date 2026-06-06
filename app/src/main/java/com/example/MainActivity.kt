@@ -42,6 +42,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,26 +72,87 @@ import com.example.ui.theme.MyApplicationTheme
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
-import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 
 fun copyUriToLocalStorage(context: Context, uri: android.net.Uri): String? {
     return try {
         val resolver = context.contentResolver
         val inputStream = resolver.openInputStream(uri) ?: return null
-        val fileName = "avatar_${System.currentTimeMillis()}.jpg"
-        val file = java.io.File(context.filesDir, fileName)
-        val outputStream = java.io.FileOutputStream(file)
-        inputStream.use { input ->
-            outputStream.use { output ->
-                input.copyTo(output)
-            }
+        val originalBitmap = android.graphics.BitmapFactory.decodeStream(inputStream) ?: return null
+        
+        // Scale down to max 800px dimension to ensure compact memory size and immediate cloud sync
+        val maxDimension = 800
+        val width = originalBitmap.width
+        val height = originalBitmap.height
+        val scaledBitmap = if (width > maxDimension || height > maxDimension) {
+            val ratio = width.toFloat() / height.toFloat()
+            val newWidth = if (ratio > 1) maxDimension else (maxDimension * ratio).toInt()
+            val newHeight = if (ratio > 1) (maxDimension / ratio).toInt() else maxDimension
+            android.graphics.Bitmap.createScaledBitmap(originalBitmap, newWidth, newHeight, true)
+        } else {
+            originalBitmap
         }
-        file.absolutePath
+        
+        val outputStream = java.io.ByteArrayOutputStream()
+        scaledBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, outputStream)
+        val byteArray = outputStream.toByteArray()
+        android.util.Base64.encodeToString(byteArray, android.util.Base64.NO_WRAP)
     } catch (e: Exception) {
         e.printStackTrace()
         null
     }
+}
+
+fun getCoilImageModel(uriString: String?): Any? {
+    if (uriString.isNullOrBlank()) return null
+    if (uriString.startsWith("content://") || uriString.startsWith("http://") || uriString.startsWith("https://")) {
+        return uriString
+    }
+    // Only treat as local file path if it starts with "/" AND does NOT start with "/9j/" (Base64 JPEG prefix) and is short
+    if (uriString.startsWith("/") && !uriString.startsWith("/9j/") && uriString.length < 500) {
+        return uriString
+    }
+    // Handle prefixed schemes or clean standard Base64 string
+    val cleanBase64 = if (uriString.contains(",")) uriString.substringAfter(",") else uriString
+    return try {
+        val bytes = android.util.Base64.decode(cleanBase64.trim(), android.util.Base64.NO_WRAP)
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    } catch (e: Exception) {
+        try {
+            val bytes = android.util.Base64.decode(cleanBase64.trim(), android.util.Base64.DEFAULT)
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e2: Exception) {
+            uriString
+        }
+    }
+}
+
+@Composable
+fun AsyncImage(
+    model: Any?,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    contentScale: ContentScale = ContentScale.Fit,
+    alignment: androidx.compose.ui.Alignment = androidx.compose.ui.Alignment.Center,
+    alpha: Float = 1.0f,
+    colorFilter: androidx.compose.ui.graphics.ColorFilter? = null
+) {
+    val decodedModel = remember(model) {
+        if (model is String) {
+            getCoilImageModel(model)
+        } else {
+            model
+        }
+    }
+    coil.compose.AsyncImage(
+        model = decodedModel,
+        contentDescription = contentDescription,
+        modifier = modifier,
+        contentScale = contentScale,
+        alignment = alignment,
+        colorFilter = colorFilter,
+        alpha = alpha
+    )
 }
 
 class MainActivity : ComponentActivity() {
@@ -98,6 +161,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Inicializar Firebase Helper para autenticación y base de datos en nube
+        com.example.data.api.FirebaseHelper.init(applicationContext)
 
         // Solicitar permiso de notificaciones para Android 13+ (API 33+) en el inicio de la app
         if (Build.VERSION.SDK_INT >= 33) {
@@ -121,6 +187,7 @@ class MainActivity : ComponentActivity() {
                 "dark" -> true
                 else -> androidx.compose.foundation.isSystemInDarkTheme()
             }
+            
             MyApplicationTheme(darkTheme = isDark) {
                 MainScreen(viewModel)
             }
@@ -152,6 +219,7 @@ fun MainScreen(viewModel: AppViewModel) {
 
     if (showLoginWelcomeState) {
         WelcomeScreen(
+            viewModel = viewModel,
             member = currentMember,
             onDismiss = { showLoginWelcomeState = false }
         )
@@ -162,7 +230,7 @@ fun MainScreen(viewModel: AppViewModel) {
     val activities by viewModel.allActivities.collectAsStateWithLifecycle()
     val articles by viewModel.allArticles.collectAsStateWithLifecycle()
     val enrollments by viewModel.allEnrollments.collectAsStateWithLifecycle()
-    val members by viewModel.allMembers.collectAsStateWithLifecycle()
+    val members by viewModel.adminMembersList.collectAsStateWithLifecycle()
     val rawNotifications by viewModel.allNotifications.collectAsStateWithLifecycle()
     val isUserAdmin = currentMember.isAdmin || currentMember.email == "coordinador@je.org"
     val notifications = remember(rawNotifications, isUserAdmin) {
@@ -179,13 +247,16 @@ fun MainScreen(viewModel: AppViewModel) {
     // Map activities dynamically based on whether loggedInMember is enrolled or not!
     val mappedActivitiesByEnrollment = remember(activities, enrollments, currentMember) {
         activities.map { activity ->
-            val isRegistered = enrollments.any { it.activityId == activity.id && it.memberEmail == currentMember.email }
+            val isRegistered = enrollments.any { 
+                it.activityId == activity.id && 
+                it.memberEmail.trim().lowercase() == currentMember.email.trim().lowercase() 
+            }
             activity.copy(isUserRegistered = isRegistered)
         }
     }
 
     // Support local PIN bypass for testing
-    var isOverrideCoordinator by remember { mutableStateOf(false) }
+    val isOverrideCoordinator by viewModel.isOverrideCoordinator.collectAsStateWithLifecycle()
     var showPinDialog by remember { mutableStateOf(false) }
     var pinText by remember { mutableStateOf("") }
     var pinError by remember { mutableStateOf(false) }
@@ -756,7 +827,7 @@ fun MainScreen(viewModel: AppViewModel) {
                             shape = RoundedCornerShape(20.dp),
                             onClick = {
                                 if (pinText == "2026" || pinText == "JE2026") {
-                                    isOverrideCoordinator = true
+                                    viewModel.setOverrideCoordinator(true)
                                     showPinDialog = false
                                     pinText = ""
                                     pinError = false
@@ -1323,7 +1394,7 @@ fun AddActivityDialog(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Crear Actividad Ecológica",
+                            text = "Crear Actividad",
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimary
@@ -2796,33 +2867,7 @@ fun FeedTab(
                     lineHeight = 16.sp
                 )
                 
-                if (!isCoordinadorMode) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.5f),
-                                shape = RoundedCornerShape(10.dp)
-                            )
-                            .padding(8.dp)
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                imageVector = Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = "El panel se actualiza con reportes de One Health y proyectos juveniles.",
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
+
             }
         }
 
@@ -2838,11 +2883,29 @@ fun FeedTab(
         ) {
             items(categories) { cat ->
                 val isSelected = selectedCategoryFilter == cat
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { selectedCategoryFilter = cat },
-                    label = { Text(cat, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal) }
+                val bgColor by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
+                    label = "bgColor"
                 )
+                val textColor by animateColorAsState(
+                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    label = "textColor"
+                )
+                
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(bgColor)
+                        .clickable { selectedCategoryFilter = cat }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = cat,
+                        color = textColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -3307,7 +3370,10 @@ fun AddReportDialog(
                                         onPublish(title, content, category, region, photoUri)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondary,
+                                    contentColor = MaterialTheme.colorScheme.onSecondary
+                                ),
                                 enabled = title.isNotBlank() && content.isNotBlank()
                             ) {
                                 Text("Subir Publicación")
@@ -3368,7 +3434,7 @@ fun EditReportDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.secondary)
+                        .background(MaterialTheme.colorScheme.primary)
                         .padding(horizontal = 16.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -3376,7 +3442,7 @@ fun EditReportDialog(
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
-                            tint = MaterialTheme.colorScheme.onSecondary
+                            tint = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -3385,12 +3451,12 @@ fun EditReportDialog(
                             text = "Editar Reporte o Novedad",
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondary
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                         Text(
-                            text = "Modificar información del ecosistema local",
+                            text = "Modificar información ya publicada",
                             fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f)
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
                         )
                     }
                 }
@@ -3446,8 +3512,8 @@ fun EditReportDialog(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(
-                                                if (isSelected) MaterialTheme.colorScheme.secondary 
-                                                else MaterialTheme.colorScheme.secondary.copy(alpha = 0.05f)
+                                                if (isSelected) MaterialTheme.colorScheme.primary 
+                                                else MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)
                                               )
                                             .clickable { category = catName }
                                             .padding(horizontal = 10.dp, vertical = 6.dp)
@@ -3456,7 +3522,7 @@ fun EditReportDialog(
                                             text = catName,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.secondary
+                                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
                                         )
                                     }
                                 }
@@ -3512,7 +3578,7 @@ fun EditReportDialog(
                                 text = "Imagen de la publicación (Opcional)",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.secondary
+                                color = MaterialTheme.colorScheme.primary
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -3525,8 +3591,8 @@ fun EditReportDialog(
                                         )
                                     },
                                     colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 ) {
                                     Icon(Icons.Default.Image, contentDescription = "Subir foto")
@@ -3591,7 +3657,10 @@ fun EditReportDialog(
                                         onSave(updated)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
                                 enabled = title.isNotBlank() && content.isNotBlank()
                             ) {
                                 Icon(Icons.Default.Check, contentDescription = "Guardar", modifier = Modifier.size(18.dp))
@@ -3675,7 +3744,7 @@ fun BugReportDialog(
                             color = MaterialTheme.colorScheme.onErrorContainer
                         )
                         Text(
-                            text = "Envío directo a soporte de Juventud Ecológica",
+                            text = "Envío directo a soporte de JE-Latinoamérica",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
                         )
@@ -3706,7 +3775,7 @@ fun BugReportDialog(
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(
-                                    text = "El reporte se enviará de forma 100% directa al equipo de soporte de Juventud Ecológica en je.react21@gmail.com, sin necesidad de abrir la aplicación de correo.",
+                                    text = "El reporte se enviará de forma directa a tu correo ${currentMember.email.trim().lowercase()} (y a la base de datos de soporte), sin abrir la aplicación de correo móvil.",
                                     fontSize = 13.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -3815,7 +3884,7 @@ fun BugReportDialog(
                                             comment = bugComment,
                                             photoPath = photoUri,
                                             onSuccess = {
-                                                Toast.makeText(context, "¡Reporte enviado exitosamente directo a soporte!\nDestinatario: je.react21@gmail.com", Toast.LENGTH_LONG).show()
+                                                Toast.makeText(context, "¡Reporte enviado exitosamente!\nDestinatario: ${currentMember.email.trim().lowercase()}", Toast.LENGTH_LONG).show()
                                                 isSending = false
                                                 onDismiss()
                                             },
@@ -3826,7 +3895,10 @@ fun BugReportDialog(
                                         )
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.error,
+                                    contentColor = MaterialTheme.colorScheme.onError
+                                ),
                                 enabled = bugComment.isNotBlank() && !isSending
                             ) {
                                 if (isSending) {
@@ -4151,7 +4223,7 @@ fun CalendarTab(
                 contentPadding = PaddingValues(bottom = 96.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                items(dayFilteredActivities) { event ->
+                items(dayFilteredActivities, key = { it.id }) { event ->
                     CalendarEventCard(
                         event = event,
                         isCoordinadorMode = isCoordinadorMode,
@@ -4365,6 +4437,18 @@ fun CalendarEventCard(
 // LOGIN & ADMIN CONSOLE SUPPORT COMPONENTS
 // ==========================================
 
+@Composable
+fun LeafLogo(modifier: Modifier = Modifier, color: Color? = null) {
+    Image(
+        painter = painterResource(id = R.drawable.ic_clover),
+        contentDescription = "Clover Logo",
+        modifier = modifier,
+        colorFilter = color?.let { androidx.compose.ui.graphics.ColorFilter.tint(it) }
+    )
+}
+
+// Legacy splash screen removed - relying on fast system splash screen
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(viewModel: AppViewModel) {
@@ -4372,192 +4456,312 @@ fun LoginScreen(viewModel: AppViewModel) {
     var password by remember { mutableStateOf("") }
     var loginError by remember { mutableStateOf(false) }
     var showForgotDialog by remember { mutableStateOf(false) }
+    var rememberMe by remember { mutableStateOf(false) }
     val context = LocalContext.current
+
+    val loginUiState by viewModel.loginUiState.collectAsStateWithLifecycle()
+    val isLoading = loginUiState is AppViewModel.LoginUiState.Loading
+
+    val forestDarkGreen = Color(0xFF253013)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF394931), // BrandGreen - Dark aesthetic forest green
-                        Color(0xFF161F13)  // Very deep brand-toned black-green
-                    )
+                    0.0f to Color(0xFF000000),
+                    0.15f to Color(0xFF000000),      
+                    0.60f to forestDarkGreen,
+                    1.0f to forestDarkGreen
                 )
             ),
         contentAlignment = Alignment.Center
     ) {
         Column(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp)
-                .verticalScroll(rememberScrollState()),
+                .fillMaxSize()
+                .systemBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Logo / Branding Representation
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(Color(0xFFB0B59E).copy(alpha = 0.15f))
-                    .border(2.dp, Color(0xFFB0B59E), RoundedCornerShape(24.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.ic_launcher_foreground),
-                    contentDescription = "Logo Jóvenes y Ecosistemas",
-                    modifier = Modifier.size(80.dp)
-                )
-            }
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Spacer(modifier = Modifier.height(24.dp))
-
-            Text(
-                text = "Portal de Miembros".uppercase(),
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFFF18824), // BrandOrange - Accent support orange
-                letterSpacing = 2.sp
+            // Logo drawn dynamically matching the clover style
+            LeafLogo(
+                modifier = Modifier.size(115.dp),
+                color = null // Preserves the original colors of your PNG
             )
-            Spacer(modifier = Modifier.height(6.dp))
+
+            // Extremely close to the logo using offset pulling
             Text(
-                text = "Jóvenes y Ecosistemas Latinoamérica",
-                fontSize = 28.sp,
+                text = "BIENVENIDO",
+                fontSize = 30.sp,
                 fontWeight = FontWeight.Black,
                 color = Color.White,
+                letterSpacing = 2.sp,
                 textAlign = TextAlign.Center,
-                letterSpacing = 0.5.sp,
-                lineHeight = 36.sp
+                modifier = Modifier.offset(y = (-10).dp)
             )
-            Spacer(modifier = Modifier.height(6.dp))
+
             Text(
-                text = "Jóvenes que encajan para transformar",
-                fontSize = 14.sp,
-                fontStyle = FontStyle.Italic,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFFB0B59E),
-                textAlign = TextAlign.Center
+                text = "INICIA SESIÓN PARA CONTINUAR",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF6B7B61),
+                letterSpacing = 1.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.offset(y = (-10).dp)
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
+            // Core Custom Card
             Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF232D20).copy(alpha = 0.85f)),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFFB0B59E).copy(alpha = 0.25f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("login_card")
+                    .drawBehind {
+                        val cardSize = this@drawBehind.size
+                        
+                        // 1. Soft Outward Shadow with strokes to prevent filling internal card background
+                        val shadowColor = Color.Black.copy(alpha = 0.08f)
+                        for (i in 1..8) {
+                            val spread = (i * 1.5f).dp.toPx()
+                            drawRoundRect(
+                                color = shadowColor,
+                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread + 3f),
+                                size = androidx.compose.ui.geometry.Size(cardSize.width + spread * 2, cardSize.height + spread * 2),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx() + spread),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
+                            )
+                        }
+                        
+                        // 2. Outward Green Glow with strokes to maintain brilliant border accent and zero interior color
+                        val glowColor = Color(0xFF5D7157).copy(alpha = 0.04f)
+                        for (i in 1..12) {
+                            val spread = (i * 2.0f).dp.toPx()
+                            drawRoundRect(
+                                color = glowColor,
+                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
+                                size = androidx.compose.ui.geometry.Size(cardSize.width + spread * 2, cardSize.height + spread * 2),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx() + spread),
+                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
+                            )
+                        }
+                    },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color.Transparent
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF5D7157)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Column(modifier = Modifier.padding(24.dp)) {
+                Column(
+                    modifier = Modifier.padding(22.dp)
+                ) {
+                    // ID Indicator Line Group
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(80.dp)
+                            .offset(y = (-14).dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = Color.White.copy(alpha = 0.35f),
+                            thickness = 1.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_clover_id),
+                            contentDescription = "ID Label Logo",
+                            modifier = Modifier.size(width = 125.dp, height = 98.dp),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = Color.White.copy(alpha = 0.35f),
+                            thickness = 1.dp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(2.dp))
+
                     Text(
-                        text = "Iniciar Sesión",
-                        fontSize = 18.sp,
+                        text = "CORREO ELECTRÓNICO",
+                        color = Color(0xFFB0B59E),
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        letterSpacing = 0.5.sp
                     )
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     OutlinedTextField(
                         value = email,
-                        onValueChange = { email = it; loginError = false },
-                        label = { Text("Correo Electrónico") },
-                        leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = Color(0xFFB0B59E)) },
+                        onValueChange = { 
+                            email = it
+                            loginError = false
+                            viewModel.resetLoginUiState()
+                        },
+                        enabled = !isLoading,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Email,
+                                contentDescription = null,
+                                tint = Color(0xFF91A37E),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("email_input"),
                         singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFFB0B59E),
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
-                            focusedLabelColor = Color(0xFFB0B59E),
-                            unfocusedLabelColor = Color.White.copy(alpha = 0.4f)
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = Color(0xFF5E7955),
+                            unfocusedBorderColor = Color(0xFF324A2D),
+                            cursorColor = Color(0xFF91A37E),
+                            disabledTextColor = Color.White.copy(alpha = 0.5f),
+                            disabledBorderColor = Color(0xFF324A2D).copy(alpha = 0.5f)
                         )
                     )
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
+
+                    Text(
+                        text = "CONTRASEÑA",
+                        color = Color(0xFFB0B59E),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    var passwordVisibility by remember { mutableStateOf(false) }
 
                     OutlinedTextField(
                         value = password,
-                        onValueChange = { password = it; loginError = false },
-                        label = { Text("Contraseña") },
-                        leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFB0B59E)) },
+                        onValueChange = { 
+                            password = it
+                            loginError = false
+                            viewModel.resetLoginUiState()
+                        },
+                        enabled = !isLoading,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = Color(0xFF91A37E),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        trailingIcon = {
+                            val visibilityIcon = if (passwordVisibility) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                            IconButton(onClick = { passwordVisibility = !passwordVisibility }) {
+                                Icon(
+                                    imageVector = visibilityIcon,
+                                    contentDescription = null,
+                                    tint = Color(0xFF91A37E),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("password_input"),
                         singleLine = true,
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        visualTransformation = if (passwordVisibility) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        shape = RoundedCornerShape(12.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedTextColor = Color.White,
                             unfocusedTextColor = Color.White,
-                            focusedBorderColor = Color(0xFFB0B59E),
-                            unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
-                            focusedLabelColor = Color(0xFFB0B59E),
-                            unfocusedLabelColor = Color.White.copy(alpha = 0.4f)
+                            focusedContainerColor = Color.Transparent,
+                            unfocusedContainerColor = Color.Transparent,
+                            focusedBorderColor = Color(0xFF5E7955),
+                            unfocusedBorderColor = Color(0xFF324A2D),
+                            cursorColor = Color(0xFF91A37E),
+                            disabledTextColor = Color.White.copy(alpha = 0.5f),
+                            disabledBorderColor = Color(0xFF324A2D).copy(alpha = 0.5f)
                         )
                     )
 
-                    if (loginError) {
+                    if (loginError || loginUiState is AppViewModel.LoginUiState.Error) {
+                        val errorMessage = (loginUiState as? AppViewModel.LoginUiState.Error)?.message 
+                            ?: "Credenciales incorrectas. Verifique correo y contraseña."
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(
-                            text = "Credenciales incorrectas. Verifique correo y contraseña.",
+                            text = errorMessage,
                             color = MaterialTheme.colorScheme.error,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    Button(
-                        onClick = {
-                            if (email.isNotBlank() && password.isNotBlank()) {
-                                viewModel.login(email, password) { success ->
-                                    if (success) {
-                                        Toast.makeText(context, "Bienvenido a Jóvenes y Ecosistemas 🎉", Toast.LENGTH_SHORT).show()
-                                    } else {
-                                        loginError = true
-                                    }
-                                }
-                            } else {
-                                Toast.makeText(context, "Por favor complete todos los campos", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("login_button"),
-                        shape = RoundedCornerShape(26.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFF18824))
+                    // Remember Me and Forgot Password Action Bar
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center
+                            modifier = Modifier.clickable { 
+                                if (!isLoading) {
+                                    rememberMe = !rememberMe 
+                                }
+                            }
                         ) {
-                            Icon(Icons.Default.Login, contentDescription = null, tint = Color.White)
+                            Box(
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .border(1.2.dp, Color(0xFF2B3D26), RoundedCornerShape(4.dp))
+                                    .background(
+                                        if (rememberMe) Color(0xFF1B2A17) else Color.Transparent,
+                                        RoundedCornerShape(4.dp)
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (rememberMe) {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        tint = Color(0xFF91A37E),
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                }
+                            }
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Acceder", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(
+                                text = "RECUÉRDAME",
+                                color = Color(0xFFB0B59E),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Forgot Password Link
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { showForgotDialog = true }
-                            .padding(vertical = 4.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
                         Text(
-                            text = "Olvidé mi contraseña",
+                            text = "OLVIDÉ MI CONTRASEÑA",
                             color = Color(0xFFB0B59E),
-                            fontSize = 13.sp,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.testTag("forgot_password_button")
+                            modifier = Modifier
+                                .testTag("forgot_password_button")
+                                .clickable { 
+                                    if (!isLoading) {
+                                        showForgotDialog = true 
+                                    }
+                                }
                         )
                     }
                 }
@@ -4565,29 +4769,112 @@ fun LoginScreen(viewModel: AppViewModel) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Helper Panel with Seed Accounts
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF161F13).copy(alpha = 0.8f)),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.08f))
+            // Iniciar Sesion Action Button
+            Button(
+                onClick = {
+                    if (email.isNotBlank() && password.isNotBlank()) {
+                        viewModel.login(email, password) { success ->
+                            if (success) {
+                                Toast.makeText(context, "Bienvenido a Jóvenes y Ecosistemas 🎉", Toast.LENGTH_SHORT).show()
+                            } else {
+                                loginError = true
+                            }
+                        }
+                    } else {
+                        Toast.makeText(context, "Por favor complete todos los campos", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled = !isLoading,
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .height(52.dp)
+                    .testTag("login_button")
+                    .drawBehind {
+                        val btnSize = this@drawBehind.size
+                        // Soft glow around the entire rounded rectangle button - very subtle intensity
+                        val glowColor = Color(0xFF5D7157).copy(alpha = 0.02f)
+                        for (i in 1..5) {
+                            val spread = (i * 2.0f).dp.toPx()
+                            drawRoundRect(
+                                color = glowColor,
+                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
+                                size = androidx.compose.ui.geometry.Size(btnSize.width + spread * 2, btnSize.height + spread * 2),
+                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx() + spread, 14.dp.toPx() + spread)
+                            )
+                        }
+                    },
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF45503F),
+                    disabledContainerColor = Color(0xFF323B2F)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5D6B56))
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "AUTENTICANDO...",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White.copy(alpha = 0.8f),
+                            letterSpacing = 1.sp
+                        )
+                    } else {
+                        Text(
+                            text = "INICIAR SESIÓN",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(30.dp))
+
+            // Seed Account Panel
+            Card(
+                modifier = Modifier.fillMaxWidth(0.95f),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF070B06).copy(alpha = 0.6f)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1B2817).copy(alpha = 0.5f))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
                     Text(
-                        text = "Cuentas autorizadas de demostración:",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.6f)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "• Director: coordinador@je.org / JE2026\n• Miembro RAM: miembro2@je.org / miembro2\n• Miembro Salud Mental: miembro3@je.org / miembro3",
+                        text = "CUENTAS DE DEMOSTRACIÓN AUTORIZADAS:",
                         fontSize = 10.sp,
-                        color = Color.White.copy(alpha = 0.45f),
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF6B7B61),
+                        letterSpacing = 0.5.sp
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "• Director: coordinador@je.org / JE2026\n• Miembro RAM: miembro2@je.org / miembro2\n• Miembro Salud: miembro3@je.org / miembro3",
+                        fontSize = 10.sp,
+                        color = Color(0xFF6B7B61).copy(alpha = 0.75f),
                         lineHeight = 14.sp
                     )
                 }
             }
+
+            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 
@@ -4635,9 +4922,11 @@ fun AdminConsoleTab(
 ) {
     var adminActiveSubTab by remember { mutableStateOf("Miembros") }
     val context = LocalContext.current
-    val googleCalendarAccount by viewModel.googleCalendarAccount.collectAsStateWithLifecycle()
-    var showGoogleLinkDialog by remember { mutableStateOf(false) }
     val isDirector = currentMember.isAdmin || currentMember.email == "coordinador@je.org" || currentMember.role == "Director General"
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.refreshAdminMembers()
+    }
 
     Column(
         modifier = Modifier
@@ -4659,149 +4948,6 @@ fun AdminConsoleTab(
         )
 
         Spacer(modifier = Modifier.height(12.dp))
-
-        if (isDirector) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (googleCalendarLinked) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f) 
-                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                        Text(
-                            text = "Vincular Calendario de Google",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = if (googleCalendarLinked) "Sincronizado: $googleCalendarAccount ✓\n(Actividades ligadas en vivo)" 
-                            else "Programa actividades directo en Google Calendar",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            lineHeight = 14.sp
-                        )
-                    }
-                    
-                    Button(
-                        onClick = {
-                            if (googleCalendarLinked) {
-                                viewModel.toggleGoogleCalendarLinked()
-                                Toast.makeText(context, "📅 Cuenta Google Desvinculada", Toast.LENGTH_SHORT).show()
-                            } else {
-                                showGoogleLinkDialog = true
-                            }
-                        },
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (googleCalendarLinked) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primary,
-                            contentColor = if (googleCalendarLinked) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onPrimary
-                        ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        modifier = Modifier.height(36.dp)
-                    ) {
-                        Text(
-                            text = if (googleCalendarLinked) "Desvincular" else "Vincular",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-        }
-
-        if (showGoogleLinkDialog) {
-            var enteredEmail by remember { mutableStateOf(googleCalendarAccount) }
-            AlertDialog(
-                onDismissRequest = { showGoogleLinkDialog = false },
-                title = {
-                    Text(
-                        text = "Vincular Cuenta de Google",
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp
-                    )
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = "Ingrese la dirección de correo electrónico de la cuenta de Google para simular la vinculación e integración de alertas en vivo:",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
-                        OutlinedTextField(
-                            value = enteredEmail,
-                            onValueChange = { enteredEmail = it },
-                            label = { Text("Correo de Google") },
-                            placeholder = { Text("ejemplo@gmail.com") },
-                            modifier = Modifier.fillMaxWidth(),
-                            singleLine = true
-                        )
-                        
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalAlignment = Alignment.Top
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Info,
-                                    contentDescription = "Información",
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = "Nota de Simulación: Esta vinculación es visual y simula la conexión en la nube. Para agregar un evento real a tu Calendario personal de Google, usa el botón de calendario 📅 de cualquier actividad en la pestaña 'Eventos'. El emulador abrirá tu app de calendario local con los detalles pre-cargados.",
-                                    fontSize = 10.5.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
-                                    lineHeight = 14.sp
-                                )
-                            }
-                        }
-                    }
-                },
-                confirmButton = {
-                    Button(
-                        onClick = {
-                            if (enteredEmail.isNotBlank()) {
-                                viewModel.toggleGoogleCalendarLinked(enteredEmail)
-                                showGoogleLinkDialog = false
-                                Toast.makeText(context, "📅 Cuenta Vinculada (Modo Demostración)", Toast.LENGTH_LONG).show()
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text("Vincular", color = Color.White, fontWeight = FontWeight.Bold)
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showGoogleLinkDialog = false }) {
-                        Text("Cancelar")
-                    }
-                },
-                shape = RoundedCornerShape(20.dp)
-            )
-        }
 
         // Sub-tabs navigation Row
         Row(
@@ -4895,11 +5041,13 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
-                items(members) { member ->
+                items(members, key = { it.email }) { member ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                     ) {
                         Row(
                             modifier = Modifier
@@ -4956,7 +5104,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
         var newEmail by remember { mutableStateOf("") }
         var newPass by remember { mutableStateOf("") }
         var newName by remember { mutableStateOf("") }
-        var newRole by remember { mutableStateOf("Embajador JE-RAM") }
+        var newRole by remember { mutableStateOf("miembro activo") }
         var newCountry by remember { mutableStateOf("Ecuador") }
         var newEmoji by remember { mutableStateOf("🐆") }
         var newIsAdmin by remember { mutableStateOf(false) }
@@ -5009,336 +5157,453 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
             }
         }
 
-        AlertDialog(
+        Dialog(
             onDismissRequest = { showAddMemberDialog = false },
-            title = { Text("Registrar Cuenta", fontWeight = FontWeight.Bold) },
-            text = {
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false
+            )
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding(),
+                color = MaterialTheme.colorScheme.background
+            ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                        .fillMaxSize()
+                        .imePadding()
                 ) {
-                    OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
-                        label = { Text("Nombre Completo") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = newEmail,
-                        onValueChange = { newEmail = it },
-                        label = { Text("Correo Electrónico") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    OutlinedTextField(
-                        value = newPass,
-                        onValueChange = { newPass = it },
-                        label = { Text("Contraseña de Acceso") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    
-                    Text("Rol One Health:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    val roles = listOf("Embajador JE-RAM", "Líder JE-Mental", "Creador JE-Podcast", "Brigada JE-Ambiente", "Director JE-Visual")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            items(roles) { r ->
-                                val sel = newRole == r
-                                Badge(
-                                    containerColor = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
-                                    contentColor = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier
-                                        .clickable { newRole = r }
-                                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text(r, fontSize = 10.sp, modifier = Modifier.padding(2.dp))
-                                }
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = newCountry,
-                        onValueChange = { newCountry = it },
-                        label = { Text("País") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Text("Fotografía Oficial (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                .clickable {
-                                    addPhotoLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!newPhotoUri.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = newPhotoUri,
-                                    contentDescription = "Foto elegida",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.PhotoCamera,
-                                    contentDescription = "Subir foto",
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1.0f)) {
-                            Button(
-                                onClick = {
-                                    addPhotoLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Añadir Foto", fontSize = 12.sp)
-                            }
-                            
-                            if (!newPhotoUri.isNullOrEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(
-                                    onClick = { newPhotoUri = null },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Quitar Foto", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    Text("Imágen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                .clickable {
-                                    addQrLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!newQrUri.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = newQrUri,
-                                    contentDescription = "QR elegido",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.QrCode,
-                                    contentDescription = "Subir QR",
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1.0f)) {
-                            Button(
-                                onClick = {
-                                    addQrLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Añadir código QR", fontSize = 12.sp)
-                            }
-                            
-                            if (!newQrUri.isNullOrEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(
-                                    onClick = { newQrUri = null },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Quitar QR", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                    
-                    Text("Avatar / Emoji:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    val emojis = listOf("🐆", "🐸", "🦉", "🦅", "🐳", "🦊", "🌿")
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        emojis.forEach { emoji ->
-                            val sel = newEmoji == emoji
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent)
-                                    .border(1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
-                                    .clickable { newEmoji = emoji },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(emoji, fontSize = 20.sp)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("Carnet Manual (Exclusivo Administrador):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("Opcional: puedes subir el carnet pre-diseñado para este miembro.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = {
-                                    addCara1Launcher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Cara 1 (Frente)", fontSize = 11.sp, maxLines = 1)
-                            }
-                            if (!newCara1Uri.isNullOrEmpty()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    IconButton(onClick = { newCara1Uri = null }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = {
-                                    addCara2Launcher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Cara 2 (Atrás)", fontSize = 11.sp, maxLines = 1)
-                            }
-                            if (!newCara2Uri.isNullOrEmpty()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    IconButton(onClick = { newCara2Uri = null }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    // Header (Verde y blanco)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Privilegios de Administrador", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Permite acceder a la consola de coordinación", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        IconButton(onClick = { showAddMemberDialog = false }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancelar",
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
                         }
-                        Switch(
-                            checked = newIsAdmin,
-                            onCheckedChange = { newIsAdmin = it }
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Registrar Miembro",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Text(
+                                text = "Completa los datos para registrar un miembro",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                            )
+                        }
                     }
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (newEmail.isNotBlank() && newPass.isNotBlank() && newName.isNotBlank()) {
-                            viewModel.registerNewMember(
-                                email = newEmail,
-                                password = newPass,
-                                fullName = newName,
-                                role = newRole,
-                                country = newCountry,
-                                emojiAvatar = newEmoji,
-                                isAdmin = newIsAdmin,
-                                photoUri = newPhotoUri,
-                                qrUri = newQrUri,
-                                customCara1Uri = newCara1Uri,
-                                customCara2Uri = newCara2Uri
-                            ) { success ->
-                                if (success) {
-                                    showAddMemberDialog = false
-                                } else {
-                                    // already exists
+
+                    // Form Content
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = newName,
+                                        onValueChange = { newName = it },
+                                        label = { Text("Nombre Completo") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = newEmail,
+                                        onValueChange = { newEmail = it },
+                                        label = { Text("Correo Electrónico") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = newPass,
+                                        onValueChange = { newPass = it },
+                                        label = { Text("Contraseña de Acceso") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                    
+                                    Text("Rol:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            items(roles) { r ->
+                                                val sel = newRole.lowercase() == r.lowercase()
+                                                Badge(
+                                                    containerColor = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                                    contentColor = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier
+                                                        .clickable { newRole = r }
+                                                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(r.replaceFirstChar { it.uppercase() }, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    OutlinedTextField(
+                                        value = newCountry,
+                                        onValueChange = { newCountry = it },
+                                        label = { Text("País") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
                                 }
                             }
                         }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Registrar", color = Color.White, fontWeight = FontWeight.Bold)
+
+                        // Attachments (Photos, QR, Emoji, Custom faces)
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Text("Multimedia y Personalización", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                                    Text("Fotografía Oficial (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                                .clickable {
+                                                    addPhotoLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (!newPhotoUri.isNullOrEmpty()) {
+                                                AsyncImage(
+                                                    model = newPhotoUri,
+                                                    contentDescription = "Foto elegida",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Filled.PhotoCamera,
+                                                    contentDescription = "Subir foto",
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1.0f)) {
+                                            Button(
+                                                onClick = {
+                                                    addPhotoLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text("Añadir Foto", fontSize = 12.sp)
+                                            }
+                                            
+                                            if (!newPhotoUri.isNullOrEmpty()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = { newPhotoUri = null },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                                ) {
+                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Quitar Foto", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Imagen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                                .clickable {
+                                                    addQrLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (!newQrUri.isNullOrEmpty()) {
+                                                AsyncImage(
+                                                    model = newQrUri,
+                                                    contentDescription = "QR elegido",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Filled.QrCode,
+                                                    contentDescription = "Subir QR",
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1.0f)) {
+                                            Button(
+                                                onClick = {
+                                                    addQrLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text("Añadir código QR", fontSize = 12.sp)
+                                            }
+                                            
+                                            if (!newQrUri.isNullOrEmpty()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = { newQrUri = null },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                                ) {
+                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Quitar QR", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Avatar / Emoji:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    val emojis = listOf("🐆", "🐸", "🦉", "🦅", "🐳", "🦊", "🌿")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        emojis.forEach { emoji ->
+                                            val sel = newEmoji == emoji
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent)
+                                                    .border(1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                                                    .clickable { newEmoji = emoji },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(emoji, fontSize = 20.sp)
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Carnet Manual (Exclusivo Administrador):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Opcional: puedes subir el carnet pre-diseñado para este miembro.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                    
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Button(
+                                                onClick = {
+                                                    addCara1Launcher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("Cara 1 (Frente)", fontSize = 11.sp, maxLines = 1)
+                                            }
+                                            if (!newCara1Uri.isNullOrEmpty()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                                    IconButton(onClick = { newCara1Uri = null }, modifier = Modifier.size(24.dp)) {
+                                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Button(
+                                                onClick = {
+                                                    addCara2Launcher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("Cara 2 (Atrás)", fontSize = 11.sp, maxLines = 1)
+                                            }
+                                            if (!newCara2Uri.isNullOrEmpty()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                                    IconButton(onClick = { newCara2Uri = null }, modifier = Modifier.size(24.dp)) {
+                                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("Privilegios de Administrador", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("Permite acceder a la consola de coordinación", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                        }
+                                        Switch(
+                                            checked = newIsAdmin,
+                                            onCheckedChange = { newIsAdmin = it }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Bottom Row: Actions
+                    Surface(
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .navigationBarsPadding()
+                                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 56.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { showAddMemberDialog = false },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Text("Cancelar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = {
+                                    if (newEmail.isNotBlank() && newPass.isNotBlank() && newName.isNotBlank()) {
+                                        viewModel.registerNewMember(
+                                            email = newEmail,
+                                            password = newPass,
+                                            fullName = newName,
+                                            role = newRole,
+                                            country = newCountry,
+                                            emojiAvatar = newEmoji,
+                                            isAdmin = newIsAdmin,
+                                            photoUri = newPhotoUri,
+                                            qrUri = newQrUri,
+                                            customCara1Uri = newCara1Uri,
+                                            customCara2Uri = newCara2Uri
+                                        ) { success ->
+                                            if (success) {
+                                                showAddMemberDialog = false
+                                            }
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                enabled = newEmail.isNotBlank() && newPass.isNotBlank() && newName.isNotBlank(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "Guardar", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Guardar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showAddMemberDialog = false }) {
-                    Text("Cancelar")
-                }
-            },
-            shape = RoundedCornerShape(20.dp)
-        )
+            }
+        }
     }
 
     if (editingMember != null) {
         val memberToEdit = editingMember!!
         var editName by remember { mutableStateOf(memberToEdit.fullName) }
+        var editEmail by remember { mutableStateOf(memberToEdit.email) }
+        var editPassword by remember { mutableStateOf(com.example.data.SecurityUtils.resolveDehashedPassword(memberToEdit.password)) }
+        var passwordVisible by remember { mutableStateOf(false) }
         var editRole by remember { mutableStateOf(memberToEdit.role) }
         var editCountry by remember { mutableStateOf(memberToEdit.country) }
         var editEmoji by remember { mutableStateOf(memberToEdit.emojiAvatar) }
@@ -5392,296 +5657,455 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
             }
         }
 
-        AlertDialog(
+        Dialog(
             onDismissRequest = { editingMember = null },
-            title = { Text("Modificar Carnet", fontWeight = FontWeight.Bold) },
-            text = {
+            properties = androidx.compose.ui.window.DialogProperties(
+                usePlatformDefaultWidth = false,
+                dismissOnBackPress = true,
+                dismissOnClickOutside = false
+            )
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
+                    .navigationBarsPadding(),
+                color = MaterialTheme.colorScheme.background
+            ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState()),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                        .fillMaxSize()
+                        .imePadding()
                 ) {
-                    OutlinedTextField(
-                        value = editName,
-                        onValueChange = { editName = it },
-                        label = { Text("Nombre Completo") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                    
-                    OutlinedTextField(
-                        value = editRole,
-                        onValueChange = { editRole = it },
-                        label = { Text("Rol / Sub-proyecto") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    OutlinedTextField(
-                        value = editCountry,
-                        onValueChange = { editCountry = it },
-                        label = { Text("País") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    Text("Fotografía Oficial (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                .clickable {
-                                    editPhotoLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!editPhotoUri.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = editPhotoUri,
-                                    contentDescription = "Foto elegida",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.PhotoCamera,
-                                    contentDescription = "Subir foto",
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1.0f)) {
-                            Button(
-                                onClick = {
-                                    editPhotoLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Añadir / Cambiar", fontSize = 12.sp)
-                            }
-                            
-                            if (!editPhotoUri.isNullOrEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(
-                                    onClick = { editPhotoUri = null },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Quitar Foto", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-
-                    Text("Imágen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(64.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                .clickable {
-                                    editQrLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (!editQrUri.isNullOrEmpty()) {
-                                AsyncImage(
-                                    model = editQrUri,
-                                    contentDescription = "QR elegido",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = Icons.Filled.QrCode,
-                                    contentDescription = "Subir QR",
-                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                )
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1.0f)) {
-                            Button(
-                                onClick = {
-                                    editQrLauncher.launch(
-                                        PickVisualMediaRequest(
-                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                        )
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Text("Añadir / Cambiar QR", fontSize = 12.sp)
-                            }
-                            
-                            if (!editQrUri.isNullOrEmpty()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                TextButton(
-                                    onClick = { editQrUri = null },
-                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                ) {
-                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text("Quitar QR", fontSize = 11.sp)
-                                }
-                            }
-                        }
-                    }
-                    
-                    Text("Avatar / Emoji:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    val emojis = listOf("🐆", "🐸", "🦉", "🦅", "🐳", "🦊", "🌿")
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        emojis.forEach { emoji ->
-                            val sel = editEmoji == emoji
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(CircleShape)
-                                    .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent)
-                                    .border(1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
-                                    .clickable { editEmoji = emoji },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(emoji, fontSize = 20.sp)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("Carnet Manual (Exclusivo Administrador):", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("Opcional: puedes subir imágenes de carnet personalizadas para este miembro.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                    
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = {
-                                    editCara1Launcher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Cara 1 (Frente)", fontSize = 11.sp, maxLines = 1)
-                            }
-                            if (!editCara1Uri.isNullOrEmpty()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    IconButton(onClick = { editCara1Uri = null }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                            }
-                        }
-                        
-                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Button(
-                                onClick = {
-                                    editCara2Launcher.launch(
-                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                    )
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Cara 2 (Atrás)", fontSize = 11.sp, maxLines = 1)
-                            }
-                            if (!editCara2Uri.isNullOrEmpty()) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
-                                    IconButton(onClick = { editCara2Uri = null }, modifier = Modifier.size(24.dp)) {
-                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
-                                    }
-                                }
-                            }
-                        }
-                    }
-
+                    // Header (Verde y blanco)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
+                            .background(MaterialTheme.colorScheme.primary)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Privilegios de Administrador", fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Permite acceder a la consola de coordinación", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        IconButton(onClick = { editingMember = null }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Cancelar",
+                                tint = MaterialTheme.colorScheme.onPrimary
+                            )
                         }
-                        Switch(
-                            checked = editIsAdmin || memberToEdit.email == "coordinador@je.org",
-                            enabled = memberToEdit.email != "coordinador@je.org",
-                            onCheckedChange = { editIsAdmin = it }
-                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Modificar Carnet de Miembro",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                            Text(
+                                text = "Edita los datos y configuración de la credencial",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+
+                    // Form
+                    LazyColumn(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = editName,
+                                        onValueChange = { editName = it },
+                                        label = { Text("Nombre Completo") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+
+                                    OutlinedTextField(
+                                        value = editEmail,
+                                        onValueChange = { /* read-only */ },
+                                        label = { Text("Correo Electrónico") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        readOnly = true,
+                                        enabled = false
+                                    )
+
+                                    OutlinedTextField(
+                                        value = editPassword,
+                                        onValueChange = { editPassword = it },
+                                        label = { Text("Contraseña de la APP") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        trailingIcon = {
+                                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                                Icon(
+                                                    imageVector = if (passwordVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                    contentDescription = if (passwordVisible) "Ocultar contraseña" else "Mostrar contraseña"
+                                                )
+                                            }
+                                        }
+                                    )
+                                    
+                                    Text("Rol:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            items(roles) { r ->
+                                                val sel = editRole.lowercase() == r.lowercase()
+                                                Badge(
+                                                    containerColor = if (sel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                                    contentColor = if (sel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier
+                                                        .clickable { editRole = r }
+                                                        .padding(horizontal = 4.dp, vertical = 4.dp)
+                                                ) {
+                                                    Text(r.replaceFirstChar { it.uppercase() }, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    OutlinedTextField(
+                                        value = editCountry,
+                                        onValueChange = { editCountry = it },
+                                        label = { Text("País") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true
+                                    )
+                                }
+                            }
+                        }
+
+                        // Attachments (Photos, QR, Emoji, Custom faces)
+                        item {
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Text("Multimedia y Personalización", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+
+                                    Text("Fotografía Oficial (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                                .clickable {
+                                                    editPhotoLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (!editPhotoUri.isNullOrEmpty()) {
+                                                AsyncImage(
+                                                    model = editPhotoUri,
+                                                    contentDescription = "Foto elegida",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Filled.PhotoCamera,
+                                                    contentDescription = "Subir foto",
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1.0f)) {
+                                            Button(
+                                                onClick = {
+                                                    editPhotoLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text("Añadir / Cambiar", fontSize = 12.sp)
+                                            }
+                                            
+                                            if (!editPhotoUri.isNullOrEmpty()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = { editPhotoUri = null },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                                ) {
+                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Quitar Foto", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Imagen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(64.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                                .clickable {
+                                                    editQrLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (!editQrUri.isNullOrEmpty()) {
+                                                AsyncImage(
+                                                    model = editQrUri,
+                                                    contentDescription = "QR elegido",
+                                                    modifier = Modifier.fillMaxSize(),
+                                                    contentScale = ContentScale.Crop
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Filled.QrCode,
+                                                    contentDescription = "Subir QR",
+                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1.0f)) {
+                                            Button(
+                                                onClick = {
+                                                    editQrLauncher.launch(
+                                                        PickVisualMediaRequest(
+                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
+                                                        )
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                            ) {
+                                                Text("Añadir / Cambiar QR", fontSize = 12.sp)
+                                            }
+                                            
+                                            if (!editQrUri.isNullOrEmpty()) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                TextButton(
+                                                    onClick = { editQrUri = null },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                                                ) {
+                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Quitar QR", fontSize = 11.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Avatar / Emoji:", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    val emojis = listOf("🐆", "🐸", "🦉", "🦅", "🐳", "🦊", "🌿")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        emojis.forEach { emoji ->
+                                            val sel = editEmoji == emoji
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(36.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (sel) MaterialTheme.colorScheme.primary.copy(alpha = 0.2f) else Color.Transparent)
+                                                    .border(1.dp, if (sel) MaterialTheme.colorScheme.primary else Color.Transparent, CircleShape)
+                                                    .clickable { editEmoji = emoji },
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text(emoji, fontSize = 20.sp)
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Text("Carnet Manual (Exclusivo Administrador):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("Opcional: puedes subir imágenes de carnet personalizadas para este miembro.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                    
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Button(
+                                                onClick = {
+                                                    editCara1Launcher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("Cara 1 (Frente)", fontSize = 11.sp, maxLines = 1)
+                                            }
+                                            if (!editCara1Uri.isNullOrEmpty()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                                    IconButton(onClick = { editCara1Uri = null }, modifier = Modifier.size(24.dp)) {
+                                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                                            Button(
+                                                onClick = {
+                                                    editCara2Launcher.launch(
+                                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                                    )
+                                                },
+                                                colors = ButtonDefaults.buttonColors(
+                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                                ),
+                                                shape = RoundedCornerShape(8.dp)
+                                            ) {
+                                                Text("Cara 2 (Atrás)", fontSize = 11.sp, maxLines = 1)
+                                            }
+                                            if (!editCara2Uri.isNullOrEmpty()) {
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    Text("Cargado", fontSize = 10.sp, color = MaterialTheme.colorScheme.primary)
+                                                    IconButton(onClick = { editCara2Uri = null }, modifier = Modifier.size(24.dp)) {
+                                                        Icon(Icons.Default.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(14.dp))
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("Privilegios de Administrador", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                            Text("Permite acceder a la consola de coordinación", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                                        }
+                                        Switch(
+                                            checked = editIsAdmin || memberToEdit.email == "coordinador@je.org",
+                                            enabled = memberToEdit.email != "coordinador@je.org",
+                                            onCheckedChange = { editIsAdmin = it }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Bottom Row: Actions
+                    Surface(
+                        tonalElevation = 6.dp,
+                        shadowElevation = 8.dp,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surface)
+                                .navigationBarsPadding()
+                                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 56.dp),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedButton(
+                                onClick = { editingMember = null },
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Text("Cancelar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Button(
+                                onClick = {
+                                    val finalPassword = editPassword.trim()
+                                    val updated = memberToEdit.copy(
+                                        fullName = editName,
+                                        role = editRole,
+                                        country = editCountry,
+                                        emojiAvatar = editEmoji,
+                                        isAdmin = if (memberToEdit.email == "coordinador@je.org") true else editIsAdmin,
+                                        photoUri = editPhotoUri,
+                                        qrUri = editQrUri,
+                                        customCara1Uri = editCara1Uri,
+                                        customCara2Uri = editCara2Uri,
+                                        password = finalPassword
+                                    )
+                                    viewModel.modifyMemberProfile(updated)
+                                    editingMember = null
+                                },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                enabled = editName.isNotBlank(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Check, contentDescription = "Guardar", modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Guardar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        val updated = memberToEdit.copy(
-                            fullName = editName,
-                            role = editRole,
-                            country = editCountry,
-                            emojiAvatar = editEmoji,
-                            isAdmin = if (memberToEdit.email == "coordinador@je.org") true else editIsAdmin,
-                            photoUri = editPhotoUri,
-                            qrUri = editQrUri,
-                            customCara1Uri = editCara1Uri,
-                            customCara2Uri = editCara2Uri
-                        )
-                        viewModel.modifyMemberProfile(updated)
-                        editingMember = null
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Guardar Cambios", color = Color.White, fontWeight = FontWeight.Bold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { editingMember = null }) {
-                    Text("Cancelar")
-                }
-            },
-            shape = RoundedCornerShape(20.dp)
-        )
+            }
+        }
     }
 }
 
@@ -5709,7 +6133,7 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
                 verticalArrangement = Arrangement.spacedBy(12.dp),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
-                items(activities) { activity ->
+                items(activities, key = { it.id }) { activity ->
                     val activityEnrollments = enrollments.filter { it.activityId == activity.id }
                     val isExpanded = expandedActivityIds.contains(activity.id)
 
@@ -5838,6 +6262,8 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
 
 @Composable
 fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotification>) {
+    var activeScreenshotUri by remember { mutableStateOf<String?>(null) }
+
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -5848,14 +6274,27 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                 text = "Buzón de Notificaciones de Red".uppercase(),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                modifier = Modifier.weight(1f)
             )
             
-            TextButton(
-                onClick = { viewModel.markNotificationsRead() },
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text("Marcar Leídas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = { viewModel.markNotificationsRead() },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text("Marcar Leídas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+
+                TextButton(
+                    onClick = { viewModel.clearAllNotifications() },
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Eliminar Todo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -5871,14 +6310,33 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
-                items(notifications) { alert ->
-                    val colorAlpha = if (alert.isRead) 0.15f else 0.4f
-                    val headerColor = if (alert.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f) else MaterialTheme.colorScheme.primary
+                items(notifications, key = { it.id }) { alert ->
+                    val isBug = alert.title.contains("Bug", ignoreCase = true) || alert.title.contains("🐛") || alert.title.contains("Fallo", ignoreCase = true)
+                    
+                    val cardBg = if (isBug) {
+                        if (alert.isRead) Color(0xFFFFF9F9) else Color(0xFFFFECEC)
+                    } else {
+                        if (alert.isRead) Color(0xFFFAFAFA) else Color.White
+                    }
+
+                    val headerColor = if (alert.isRead) {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    } else if (isBug) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    }
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = colorAlpha))
+                        colors = CardDefaults.cardColors(containerColor = cardBg),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp, 
+                            if (isBug) MaterialTheme.colorScheme.error.copy(alpha = 0.25f) 
+                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
                     ) {
                         Row(
                             modifier = Modifier
@@ -5890,7 +6348,7 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
-                                        imageVector = if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.NotificationsActive,
+                                        imageVector = if (isBug) Icons.Default.Warning else if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.NotificationsActive,
                                         contentDescription = null,
                                         tint = headerColor,
                                         modifier = Modifier.size(16.dp)
@@ -5902,6 +6360,21 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                         fontWeight = FontWeight.Bold,
                                         color = headerColor
                                     )
+                                    if (isBug && !alert.isRead) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Card(
+                                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.error),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "BUG",
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onError,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
@@ -5909,7 +6382,38 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                // Preview bug screenshot attachment if there is one!
+                                if (!alert.photoUri.isNullOrBlank()) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .padding(top = 4.dp)
+                                            .clickable { activeScreenshotUri = alert.photoUri }
+                                    ) {
+                                        Card(
+                                            modifier = Modifier
+                                                .size(60.dp)
+                                                .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            AsyncImage(
+                                                model = alert.photoUri,
+                                                contentDescription = "Pantallazo de bug",
+                                                modifier = Modifier.fillMaxSize(),
+                                                contentScale = ContentScale.Crop
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Column {
+                                            Text("Captura de pantalla", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                                            Text("Toca para ampliar 🔍", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                }
+
                                 Text(
                                     text = alert.timestamp,
                                     fontSize = 9.sp,
@@ -5926,10 +6430,72 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
             }
         }
     }
+
+    // Full screen expandable screenshot lightbox dialog
+    if (activeScreenshotUri != null) {
+        Dialog(
+            onDismissRequest = { activeScreenshotUri = null }
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .padding(16.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Evidencia de Bug / Captura",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        IconButton(onClick = { activeScreenshotUri = null }) {
+                            Icon(Icons.Default.Close, contentDescription = "Cerrar", modifier = Modifier.size(20.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.Black.copy(alpha = 0.05f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = activeScreenshotUri,
+                            contentDescription = "Pantallazo completo",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    TextButton(
+                        onClick = { activeScreenshotUri = null },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) {
+                        Text("Cerrar Vista", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun WelcomeScreen(member: Member, onDismiss: () -> Unit) {
+fun WelcomeScreen(viewModel: com.example.ui.AppViewModel, member: Member, onDismiss: () -> Unit) {
     var startAnim by remember { mutableStateOf(false) }
     val cardScale by animateFloatAsState(
         targetValue = if (startAnim) 1f else 0.85f,
@@ -5942,7 +6508,19 @@ fun WelcomeScreen(member: Member, onDismiss: () -> Unit) {
 
     LaunchedEffect(Unit) {
         startAnim = true
-        kotlinx.coroutines.delay(2800)
+        val startTime = System.currentTimeMillis()
+        var completed = false
+        viewModel.syncWithCloud { _, _ ->
+            completed = true
+        }
+        while (!completed) {
+            kotlinx.coroutines.delay(100)
+        }
+        val elapsed = System.currentTimeMillis() - startTime
+        val remainingDelay = maxOf(0L, 1600L - elapsed)
+        if (remainingDelay > 0) {
+            kotlinx.coroutines.delay(remainingDelay)
+        }
         onDismiss()
     }
 
@@ -6028,25 +6606,40 @@ fun WelcomeScreen(member: Member, onDismiss: () -> Unit) {
                         .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
                         .padding(horizontal = 14.dp, vertical = 6.dp)
                 ) {
+                    val formattedRole = remember(member.role) {
+                        member.role.split(" ").joinToString(" ") { word ->
+                            word.replaceFirstChar { if (it.isLowerCase()) it.uppercase() else it.toString() }
+                        }
+                    }
                     Text(
-                        text = member.role,
+                        text = formattedRole,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.primary
                     )
                 }
 
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(28.dp),
+                        strokeWidth = 3.dp,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Accediendo al perfil...",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
                 Spacer(modifier = Modifier.height(20.dp))
-
-                Text(
-                    text = "Has ingresado con éxito a la Red Latinoamericana de Jóvenes y Ecosistemas.",
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
-                    textAlign = TextAlign.Center,
-                    lineHeight = 18.sp
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
                     text = "Credencial: ${member.credentialId} • América Latina",
@@ -6056,34 +6649,7 @@ fun WelcomeScreen(member: Member, onDismiss: () -> Unit) {
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(32.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Acceder al Portal",
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
-                        )
-                        Icon(
-                            imageVector = Icons.Default.Check,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
@@ -6453,6 +7019,7 @@ fun NotificationListDialog(
     onMarkAllRead: () -> Unit,
     onClearNotification: (Int) -> Unit
 ) {
+    val sortedNotifications = remember(notifications) { notifications.sortedByDescending { it.id } }
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -6499,19 +7066,39 @@ fun NotificationListDialog(
                 }
                 
                 val unreadCount = notifications.count { !it.isRead }
-                if (unreadCount > 0) {
-                    Button(
-                        onClick = onMarkAllRead,
+                if (notifications.isNotEmpty()) {
+                    Row(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                        ),
-                        shape = RoundedCornerShape(12.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Marcar todas como leídas", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = onMarkAllRead,
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            enabled = unreadCount > 0,
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Marcar leídas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { viewModel.clearAllNotifications() },
+                            modifier = Modifier.weight(1f),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            ),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Eliminar todas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
 
@@ -6552,7 +7139,7 @@ fun NotificationListDialog(
                             .heightIn(max = 240.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        items(notifications.sortedByDescending { it.id }) { alert ->
+                        items(sortedNotifications, key = { it.id }) { alert ->
                             val isUnread = !alert.isRead
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -6685,6 +7272,7 @@ fun NotificationPrefRow(
 fun AdminCloudPanel(viewModel: AppViewModel) {
     val cloudSyncUrl by viewModel.cloudSyncUrl.collectAsStateWithLifecycle()
     val syncState by viewModel.syncState.collectAsStateWithLifecycle()
+    val cloudDiagnosis by viewModel.cloudDiagnosis.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     Column(
@@ -6835,7 +7423,9 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (syncState is AppViewModel.SyncState.Syncing) MaterialTheme.colorScheme.surfaceVariant
-                        else MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.primary,
+                        contentColor = if (syncState is AppViewModel.SyncState.Syncing) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.onPrimary
                     ),
                     enabled = syncState !is AppViewModel.SyncState.Syncing
                 ) {
@@ -6850,6 +7440,316 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Text(
+                        text = "Escáner y Auditoría de Errores de la Nube",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Text(
+                    text = "Realiza un análisis criptográfico autónomo, mide latencia, valida perfiles de descifrado y diagnostica discrepancias de registros entre el almacenamiento local y el servidor.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    lineHeight = 16.sp
+                )
+
+                when (val state = cloudDiagnosis) {
+                    is AppViewModel.CloudDiagnosisState.Idle -> {
+                        // Display default state
+                    }
+                    is AppViewModel.CloudDiagnosisState.Scanning -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.05f))
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(32.dp),
+                                    strokeWidth = 3.dp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Analizando estructura cifrada y ping...",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+                    }
+                    is AppViewModel.CloudDiagnosisState.Error -> {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.08f))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = state.message,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.error,
+                                lineHeight = 14.sp
+                            )
+                        }
+                    }
+                    is AppViewModel.CloudDiagnosisState.Success -> {
+                        val report = state.report
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Comparativa de Datos (Local vs Nube):",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    
+                                    val items = listOf(
+                                        "Actividades" to (report.localActivities to report.remoteActivities),
+                                        "Miembros" to (report.localMembers to report.remoteMembers),
+                                        "Artículos" to (report.localArticles to report.remoteArticles),
+                                        "Notificaciones" to (report.localNotifications to report.remoteNotifications),
+                                        "Inscripciones" to (report.localEnrollments to report.remoteEnrollments)
+                                    )
+                                    
+                                    for ((label, counts) in items) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween
+                                        ) {
+                                            Text(text = label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                                            Text(
+                                                text = "${counts.first} locales  •  ${counts.second} en nube",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Firebase & Active Session Analysis Card
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "Auditoría de Enlaces y Sesión:",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+
+                                    // Firebase Check Row
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Conectividad Firebase / Firestore", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            val isFirebaseConnected = report.firebaseAuthConnected && report.firebaseRtdbConnected
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (isFirebaseConnected) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error)
+                                            )
+                                            Text(
+                                                text = if (isFirebaseConnected) "Conectado" else "Limitado / Fuera de línea",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (isFirebaseConnected) Color(0xFF4CAF50) else MaterialTheme.colorScheme.error
+                                            )
+                                        }
+                                    }
+
+                                    // Active Session Check Row
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Integridad de Sesión Activa", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurface)
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(8.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (report.activeSessionSynced) Color(0xFF4CAF50) else Color(0xFFFF9800))
+                                            )
+                                            Text(
+                                                text = if (report.activeSessionSynced) "Sincronizada (OK)" else "Inconsistencias",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = if (report.activeSessionSynced) Color(0xFF4CAF50) else Color(0xFFFF9800)
+                                            )
+                                        }
+                                    }
+
+                                    if (!report.activeSessionSynced && report.activeSessionDiscrepancy != null) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(Color(0xFFFF9800).copy(alpha = 0.08f))
+                                                .padding(8.dp)
+                                        ) {
+                                            Text(
+                                                text = report.activeSessionDiscrepancy,
+                                                fontSize = 10.sp,
+                                                color = Color(0xFFD84315),
+                                                lineHeight = 13.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(
+                                        if (report.decryptFailureMembersCount > 0) MaterialTheme.colorScheme.error.copy(alpha = 0.05f)
+                                        else Color(0xFF4CAF50).copy(alpha = 0.05f)
+                                    )
+                                    .padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (report.decryptFailureMembersCount > 0) Icons.Default.Warning else Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = if (report.decryptFailureMembersCount > 0) MaterialTheme.colorScheme.error else Color(0xFF4CAF50),
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Text(
+                                    text = "Seguridad: ${report.decryptSuccessMembersCount} perfiles legibles, ${report.decryptFailureMembersCount} ilegibles (Clave de descifrado).",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (report.decryptFailureMembersCount > 0) MaterialTheme.colorScheme.error else Color(0xFF4CAF50)
+                                )
+                            }
+
+                            if (report.recommendations.isNotEmpty()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "Resultado del Escaneo:",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    for (rec in report.recommendations) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Text(text = "•", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = rec,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f),
+                                                lineHeight = 14.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        if (cloudDiagnosis !is AppViewModel.CloudDiagnosisState.Scanning) {
+                            viewModel.scanCloudDatabase()
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    )
+                ) {
+                    if (cloudDiagnosis is AppViewModel.CloudDiagnosisState.Scanning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Escaneando nube...",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Filled.Search,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Escanear y Diagnosticar Nube",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -7205,14 +8105,74 @@ fun DetailMetaRow(icon: androidx.compose.ui.graphics.vector.ImageVector, label: 
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
             )
-            Text(
-                text = value,
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Medium
-            )
+            if (value.contains("http://") || value.contains("https://")) {
+                AutolinkText(
+                    text = value,
+                    style = androidx.compose.ui.text.TextStyle(
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Medium
+                    )
+                )
+            } else {
+                Text(
+                    text = value,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
     }
+}
+
+@Composable
+fun AutolinkText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = androidx.compose.ui.text.TextStyle.Default
+) {
+    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val urlPattern = "(https?://[\\w\\d:#@%/;$()~_?\\+-=\\\\\\.&]+)".toRegex()
+    val annotatedString = androidx.compose.ui.text.buildAnnotatedString {
+        var lastIndex = 0
+        urlPattern.findAll(text).forEach { matchResult ->
+            val start = matchResult.range.first
+            val end = matchResult.range.last + 1
+            if (start > lastIndex) {
+                append(text.substring(lastIndex, start))
+            }
+            pushStringAnnotation(tag = "URL", annotation = matchResult.value)
+            withStyle(style = androidx.compose.ui.text.SpanStyle(
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                fontWeight = FontWeight.Bold
+            )) {
+                append(matchResult.value)
+            }
+            pop()
+            lastIndex = end
+        }
+        if (lastIndex < text.length) {
+            append(text.substring(lastIndex))
+        }
+    }
+    
+    androidx.compose.foundation.text.ClickableText(
+        text = annotatedString,
+        modifier = modifier,
+        style = style,
+        onClick = { offset ->
+            annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                .firstOrNull()?.let { annotation ->
+                    try {
+                        uriHandler.openUri(annotation.item)
+                    } catch (e: Exception) {
+                        // ignore
+                    }
+                }
+        }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -7312,7 +8272,7 @@ fun ActivityEditDialog(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Editar Actividad Ecológica",
+                            text = "Editar Actividad",
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.onPrimary

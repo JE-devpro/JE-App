@@ -26,6 +26,7 @@ val GothamRounded = FontFamily(
     Font(googleFont = GothamRoundedFontName, fontProvider = provider, weight = FontWeight.SemiBold),
     Font(googleFont = GothamRoundedFontName, fontProvider = provider, weight = FontWeight.Bold),
     Font(googleFont = GothamRoundedFontName, fontProvider = provider, weight = FontWeight.ExtraBold),
+    Font(googleFont = GothamRoundedFontName, fontProvider = provider, weight = FontWeight.Black),
 )
 
 // Set of Material typography styles config para usar GothamRounded por defecto en toda la app

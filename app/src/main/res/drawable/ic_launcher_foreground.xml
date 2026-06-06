@@ -1,50 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    
-    <!-- Outer Stylized Glow Ring representing Youth Ecosystem network -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M54,12 A42,42 0 1 1 53.9,12"
-        android:strokeWidth="1.5"
-        android:strokeColor="#34D399"
-        android:strokeAlpha="0.4" />
-
-    <!-- Organic Leaf Main Base -->
-    <path
-        android:fillColor="#D8F3DC"
-        android:pathData="M54,16 C38,30 22,46 22,64 C22,82 36,92 54,92 C72,92 86,82 86,64 C86,46 70,30 54,16 Z" />
-
-    <!-- Leaf Contrasting Half Face for Modern Flat Design -->
-    <path
-        android:fillColor="#4ADE80"
-        android:pathData="M54,16 C68,28 86,46 86,64 C86,82 72,92 54,92 Z" />
-
-    <!-- Central Vein Structure (Eco Golden Sun branches) -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M54,26 L54,84"
-        android:strokeWidth="3.2"
-        android:strokeColor="#FBBF24"
-        android:strokeLineCap="round" />
-        
-    <!-- Secondary Right Veins -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M54,40 L68,30 M54,52 L72,42 M54,64 L74,56 M54,76 L68,70"
-        android:strokeWidth="2.5"
-        android:strokeColor="#FBBF24"
-        android:strokeLineCap="round" />
-
-    <!-- Secondary Left Veins (Mirror offset) -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M54,40 L40,30 M54,52 L36,42 M54,64 L34,56 M54,76 L40,70"
-        android:strokeWidth="2.5"
-        android:strokeColor="#F0FDF4"
-        android:strokeLineCap="round" />
-
-</vector>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="66dp"
+        android:height="66dp"
+        android:drawable="@drawable/icono_personalizado"
+        android:gravity="center" />
+</layer-list>
