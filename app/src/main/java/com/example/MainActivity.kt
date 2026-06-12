@@ -527,8 +527,8 @@ fun MainScreen(viewModel: AppViewModel) {
                     text = { Text("Subir Reporte", fontWeight = FontWeight.Bold) },
                     icon = { Icon(Icons.Filled.EditNote, contentDescription = "Publicar") },
                     onClick = { showAddReportDialog = true },
-                    containerColor = MaterialTheme.colorScheme.secondary,
-                    contentColor = MaterialTheme.colorScheme.onSecondary,
+                    containerColor = MaterialTheme.colorScheme.primary,
+                    contentColor = MaterialTheme.colorScheme.onPrimary,
                     modifier = Modifier
                         .padding(bottom = 84.dp)
                         .testTag("add_report_fab")
@@ -912,6 +912,50 @@ fun ActivitiesTab(
 ) {
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
     val categories = listOf("Todos", "Educación", "Asamblea general", "Actividad", "Voluntariado")
+    var activityToDelete by remember { mutableStateOf<EcoActivity?>(null) }
+
+    if (activityToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { activityToDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text("Eliminar Actividad", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Text(
+                    "¿De verdad deseas eliminar permanentemente la actividad \"${activityToDelete?.title}\"? Esta acción no se puede revertir.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        activityToDelete?.let { onDeleteActivity(it.id) }
+                        activityToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar Actividad", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { activityToDelete = null }) {
+                    Text("Cancelar")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         
@@ -1133,7 +1177,7 @@ fun ActivitiesTab(
                         item = item,
                         isCoordinadorMode = isCoordinadorMode,
                         onToggleEnroll = { onToggleEnroll(item) },
-                        onDelete = { onDeleteActivity(item.id) },
+                        onDelete = { activityToDelete = item },
                         onClick = { onCardClick(item) }
                     )
                 }
@@ -2804,6 +2848,50 @@ fun FeedTab(
     val searchQuery = ""
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
     val categories = listOf("Todos", "JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "Conservación", "Comunidad")
+    var articleToDelete by remember { mutableStateOf<EcoArticle?>(null) }
+
+    if (articleToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { articleToDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text("Eliminar Publicación", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Text(
+                    "¿De verdad deseas eliminar permanentemente la noticia/reporte \"${articleToDelete?.title}\"? Esta acción no se puede revertir.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        articleToDelete?.let { onDeleteArticle(it.id) }
+                        articleToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar de la Red", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { articleToDelete = null }) {
+                    Text("Cancelar")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         
@@ -2965,7 +3053,7 @@ fun FeedTab(
                     ArticleCard(
                         item = item,
                         isCoordinadorMode = isCoordinadorMode,
-                        onDelete = { onDeleteArticle(item.id) },
+                        onDelete = { articleToDelete = item },
                         onClick = { onArticleClick(item) }
                     )
                 }
@@ -3154,7 +3242,7 @@ fun AddReportDialog(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.secondary)
+                        .background(MaterialTheme.colorScheme.primary)
                         .padding(horizontal = 16.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -3162,7 +3250,7 @@ fun AddReportDialog(
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
-                            tint = MaterialTheme.colorScheme.onSecondary
+                            tint = MaterialTheme.colorScheme.onPrimary
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
@@ -3171,12 +3259,12 @@ fun AddReportDialog(
                             text = "Contribuir Reporte o Novedad",
                             fontSize = 19.sp,
                             fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondary
+                            color = MaterialTheme.colorScheme.onPrimary
                         )
                         Text(
                             text = "Publica información valiosa sobre ecosistemas locales",
                             fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSecondary.copy(alpha = 0.8f)
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
                         )
                     }
                 }
@@ -3371,8 +3459,8 @@ fun AddReportDialog(
                                     }
                                 },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.secondary,
-                                    contentColor = MaterialTheme.colorScheme.onSecondary
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
                                 ),
                                 enabled = title.isNotBlank() && content.isNotBlank()
                             ) {
@@ -4001,6 +4089,50 @@ fun CalendarTab(
     val context = LocalContext.current
     var selectedEventTypeFilter by remember { mutableStateOf("Todos") }
     val eventTypes = listOf("Todos", "Educación", "Asamblea general", "Actividad", "Voluntariado")
+    var eventToDelete by remember { mutableStateOf<EcoActivity?>(null) }
+
+    if (eventToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { eventToDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text("Eliminar Evento", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Text(
+                    "¿De verdad deseas eliminar permanentemente la actividad/evento de calendario \"${eventToDelete?.title}\"? Esta acción no se puede revertir.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        eventToDelete?.let { onDeleteActivity(it.id) }
+                        eventToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar Evento", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { eventToDelete = null }) {
+                    Text("Cancelar")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 
     // Selected Day in June 2026
     var selectedDay by remember { mutableStateOf(5) } // June 5 as default selected day
@@ -4227,7 +4359,7 @@ fun CalendarTab(
                     CalendarEventCard(
                         event = event,
                         isCoordinadorMode = isCoordinadorMode,
-                        onDelete = { onDeleteActivity(event.id) },
+                        onDelete = { eventToDelete = event },
                         onRegister = { onToggleEnroll(event) },
                         onAddToPersonalCalendar = {
                             // Launch Implicit Intent to Calendar
@@ -4986,7 +5118,7 @@ fun AdminConsoleTab(
                     AdminMembersPanel(viewModel = viewModel, members = members)
                 }
                 "Inscripciones" -> {
-                    AdminEnrollmentsPanel(enrollments = enrollments, activities = activities)
+                    AdminEnrollmentsPanel(viewModel = viewModel, enrollments = enrollments, activities = activities)
                 }
                 "Alertas" -> {
                     AdminAlertsPanel(viewModel = viewModel, notifications = notifications)
@@ -5003,8 +5135,100 @@ fun AdminConsoleTab(
 @Composable
 fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
     val context = LocalContext.current
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+    val isDark = when (prefTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    val cardBg = if (isDark) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f) else Color.White
+
     var showAddMemberDialog by remember { mutableStateOf(false) }
     var editingMember by remember { mutableStateOf<Member?>(null) }
+    var memberToDelete by remember { mutableStateOf<Member?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var sortByField by remember { mutableStateOf("none") } // "none", "name", "role", "date"
+    var isAscending by remember { mutableStateOf(true) }
+
+    if (memberToDelete != null) {
+        AlertDialog(
+            onDismissRequest = { memberToDelete = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Warning,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Text("Confirmar eliminación", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Text(
+                    "¿De verdad deseas eliminar permanentemente al miembro \"${memberToDelete?.fullName}\"? Esto revocará de inmediato sus credenciales de carnet digital y acceso. Se mantendrá el historial local e histórico de sus colaboraciones.",
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        memberToDelete?.let { viewModel.removeMember(it.email) }
+                        memberToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Eliminar Miembro", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { memberToDelete = null }) {
+                    Text("Cancelar")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
+    val filteredMembers = remember(members, searchQuery) {
+        if (searchQuery.isBlank()) {
+            members
+        } else {
+            val query = searchQuery.trim().lowercase()
+            members.filter {
+                it.fullName.lowercase().contains(query) || it.role.lowercase().contains(query)
+            }
+        }
+    }
+
+    val sortedAndFilteredMembers = remember(filteredMembers, sortByField, isAscending) {
+        when (sortByField) {
+            "name" -> {
+                if (isAscending) filteredMembers.sortedBy { it.fullName.lowercase() }
+                else filteredMembers.sortedByDescending { it.fullName.lowercase() }
+            }
+            "role" -> {
+                if (isAscending) filteredMembers.sortedBy { it.role.lowercase() }
+                else filteredMembers.sortedByDescending { it.role.lowercase() }
+            }
+            "date" -> {
+                val parseDate = { dateStr: String ->
+                    val parts = dateStr.split("/")
+                    if (parts.size == 3) {
+                        "${parts[2]}${parts[1]}${parts[0]}"
+                    } else {
+                        dateStr
+                    }
+                }
+                if (isAscending) filteredMembers.sortedBy { parseDate(it.joinDate) }
+                else filteredMembers.sortedByDescending { parseDate(it.joinDate) }
+            }
+            else -> filteredMembers
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
@@ -5029,11 +5253,161 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(6.dp))
+
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = { searchQuery = it },
+            placeholder = { Text("Buscar por nombre o rol...", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)) },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.Search,
+                    contentDescription = "Buscar",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(20.dp)
+                )
+            },
+            trailingIcon = {
+                if (searchQuery.isNotEmpty()) {
+                    IconButton(onClick = { searchQuery = "" }) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Limpiar búsqueda",
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            shape = RoundedCornerShape(24.dp),
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
+                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+            )
+        )
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // Interfaz de ordenación de columnas - Refinada estéticamente
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.padding(end = 4.dp)
+            ) {
+                Text(
+                    text = "Ordenar:",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                )
+            }
+
+            val sortKeys = listOf(
+                Triple("name", "Nombre", Icons.Default.Person),
+                Triple("role", "Rol", Icons.Default.VerifiedUser),
+                Triple("date", "Ingreso", Icons.Default.WbSunny)
+            )
+
+            sortKeys.forEach { (field, label, icon) ->
+                val isSelected = sortByField == field
+                val containerColor = if (isSelected) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.9f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                }
+                val contentColor = if (isSelected) {
+                    MaterialTheme.colorScheme.onPrimaryContainer
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                val borderColor = if (isSelected) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
+                } else {
+                    Color.Transparent
+                }
+
+                Surface(
+                    onClick = {
+                        if (sortByField == field) {
+                            if (isAscending) {
+                                isAscending = false
+                            } else {
+                                sortByField = "none"
+                            }
+                        } else {
+                            sortByField = field
+                            isAscending = true
+                        }
+                    },
+                    shape = RoundedCornerShape(20.dp),
+                    color = containerColor,
+                    contentColor = contentColor,
+                    border = if (isSelected) androidx.compose.foundation.BorderStroke(1.dp, borderColor) else null,
+                    modifier = Modifier
+                        .height(32.dp)
+                        .testTag("sort_by_${field}_btn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp)
+                        )
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                        )
+                        if (isSelected) {
+                            Icon(
+                                imageVector = if (isAscending) Icons.Default.ArrowUpward else Icons.Default.ArrowDownward,
+                                contentDescription = if (isAscending) "Asc" else "Desc",
+                                modifier = Modifier.size(12.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
 
         if (members.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 Text("No hay miembros registrados", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f))
+            }
+        } else if (sortedAndFilteredMembers.isEmpty()) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(40.dp),
+                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                    )
+                    Text(
+                        "No se encontraron resultados para \"$searchQuery\"",
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    )
+                }
             }
         } else {
             LazyColumn(
@@ -5041,13 +5415,15 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                 verticalArrangement = Arrangement.spacedBy(10.dp),
                 contentPadding = PaddingValues(bottom = 96.dp)
             ) {
-                items(members, key = { it.email }) { member ->
+                items(sortedAndFilteredMembers, key = { it.email }) { member ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        colors = CardDefaults.cardColors(
+                            containerColor = cardBg
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                     ) {
                         Row(
                             modifier = Modifier
@@ -5088,7 +5464,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                     Icon(Icons.Default.Edit, contentDescription = "Editar Carnet", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                                 }
                                 if (member.email != "coordinador@je.org") {
-                                    IconButton(onClick = { viewModel.removeMember(member.email) }) {
+                                    IconButton(onClick = { memberToDelete = member }) {
                                         Icon(Icons.Default.Delete, contentDescription = "Eliminar Miembro", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(20.dp))
                                     }
                                 }
@@ -5249,7 +5625,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                     )
                                     
                                     Text("Rol:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo")
+                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo", "director", "secretario")
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -5362,75 +5738,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         }
                                     }
 
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                                    Text("Imagen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(64.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                                .clickable {
-                                                    addQrLauncher.launch(
-                                                        PickVisualMediaRequest(
-                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                                        )
-                                                    )
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (!newQrUri.isNullOrEmpty()) {
-                                                AsyncImage(
-                                                    model = newQrUri,
-                                                    contentDescription = "QR elegido",
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Filled.QrCode,
-                                                    contentDescription = "Subir QR",
-                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                                )
-                                            }
-                                        }
-                                        
-                                        Column(modifier = Modifier.weight(1.0f)) {
-                                            Button(
-                                                onClick = {
-                                                    addQrLauncher.launch(
-                                                        PickVisualMediaRequest(
-                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                                        )
-                                                    )
-                                                },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                                ),
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Text("Añadir código QR", fontSize = 12.sp)
-                                            }
-                                            
-                                            if (!newQrUri.isNullOrEmpty()) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                TextButton(
-                                                    onClick = { newQrUri = null },
-                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                                ) {
-                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Quitar QR", fontSize = 11.sp)
-                                                }
-                                            }
-                                        }
-                                    }
 
                                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
@@ -5762,7 +6070,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                     )
                                     
                                     Text("Rol:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo")
+                                    val roles = listOf("coordinador", "miembro activo", "miembro pasivo", "director", "secretario")
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -5875,75 +6183,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         }
                                     }
 
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                                    Text("Imagen de Código QR (Opcional):", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(64.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
-                                                .clickable {
-                                                    editQrLauncher.launch(
-                                                        PickVisualMediaRequest(
-                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                                        )
-                                                    )
-                                                },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            if (!editQrUri.isNullOrEmpty()) {
-                                                AsyncImage(
-                                                    model = editQrUri,
-                                                    contentDescription = "QR elegido",
-                                                    modifier = Modifier.fillMaxSize(),
-                                                    contentScale = ContentScale.Crop
-                                                )
-                                            } else {
-                                                Icon(
-                                                    imageVector = Icons.Filled.QrCode,
-                                                    contentDescription = "Subir QR",
-                                                    tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
-                                                )
-                                            }
-                                        }
-                                        
-                                        Column(modifier = Modifier.weight(1.0f)) {
-                                            Button(
-                                                onClick = {
-                                                    editQrLauncher.launch(
-                                                        PickVisualMediaRequest(
-                                                            ActivityResultContracts.PickVisualMedia.ImageOnly
-                                                        )
-                                                    )
-                                                },
-                                                colors = ButtonDefaults.buttonColors(
-                                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                                                ),
-                                                shape = RoundedCornerShape(12.dp)
-                                            ) {
-                                                Text("Añadir / Cambiar QR", fontSize = 12.sp)
-                                            }
-                                            
-                                            if (!editQrUri.isNullOrEmpty()) {
-                                                Spacer(modifier = Modifier.height(4.dp))
-                                                TextButton(
-                                                    onClick = { editQrUri = null },
-                                                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                                                ) {
-                                                    Icon(imageVector = Icons.Filled.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Quitar QR", fontSize = 11.sp)
-                                                }
-                                            }
-                                        }
-                                    }
 
                                     HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
@@ -6110,7 +6350,15 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
 }
 
 @Composable
-fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<EcoActivity>) {
+fun AdminEnrollmentsPanel(viewModel: AppViewModel, enrollments: List<EcoEnrollment>, activities: List<EcoActivity>) {
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+    val isDark = when (prefTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    val cardBg = if (isDark) MaterialTheme.colorScheme.surface else Color.White
+
     var expandedActivityIds by remember { mutableStateOf(emptySet<Int>()) }
 
     Column(modifier = Modifier.fillMaxSize()) {
@@ -6148,7 +6396,7 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
                                 }
                             },
                         shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        colors = CardDefaults.cardColors(containerColor = cardBg),
                         border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
                     ) {
                         Column(modifier = Modifier.padding(14.dp)) {
@@ -6262,43 +6510,109 @@ fun AdminEnrollmentsPanel(enrollments: List<EcoEnrollment>, activities: List<Eco
 
 @Composable
 fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotification>) {
+    val context = LocalContext.current
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+    val isDark = when (prefTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
     var activeScreenshotUri by remember { mutableStateOf<String?>(null) }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "Buzón de Notificaciones de Red".uppercase(),
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                modifier = Modifier.weight(1f)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.08f)
             )
-            
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                TextButton(
-                    onClick = { viewModel.markNotificationsRead() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.primary)
-                ) {
-                    Text("Marcar Leídas", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = "Buzón de Notificaciones de Red".uppercase(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
 
-                TextButton(
-                    onClick = { viewModel.clearAllNotifications() },
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Eliminar Todo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    FilledTonalButton(
+                        onClick = { viewModel.markNotificationsRead() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(34.dp).testTag("mark_all_read_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Todo Leído", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    FilledTonalButton(
+                        onClick = { viewModel.clearAllNotifications() },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(34.dp).testTag("clear_local_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f),
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Borrar Todo", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = {
+                            viewModel.clearAllCloudNotifications { success, message ->
+                                android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.weight(1f).height(34.dp).testTag("clear_cloud_btn"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CloudUpload,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Limpiar Nube", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(6.dp))
 
         if (notifications.isEmpty()) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -6313,14 +6627,28 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                 items(notifications, key = { it.id }) { alert ->
                     val isBug = alert.title.contains("Bug", ignoreCase = true) || alert.title.contains("🐛") || alert.title.contains("Fallo", ignoreCase = true)
                     
-                    val cardBg = if (isBug) {
-                        if (alert.isRead) Color(0xFFFFF9F9) else Color(0xFFFFECEC)
+                    val cardBgItem = if (isDark) {
+                        if (alert.isRead) {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                        } else if (isBug) {
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.08f)
+                        } else {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.04f)
+                        }
                     } else {
-                        if (alert.isRead) Color(0xFFFAFAFA) else Color.White
+                        Color.White
                     }
 
-                    val headerColor = if (alert.isRead) {
-                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                    val borderColor = if (alert.isRead) {
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.08f)
+                    } else if (isBug) {
+                        MaterialTheme.colorScheme.error.copy(alpha = 0.25f)
+                    } else {
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                    }
+
+                    val accentColor = if (alert.isRead) {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                     } else if (isBug) {
                         MaterialTheme.colorScheme.error
                     } else {
@@ -6328,38 +6656,51 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                     }
 
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = cardBg),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp, 
-                            if (isBug) MaterialTheme.colorScheme.error.copy(alpha = 0.25f) 
-                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 1.5.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 2.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(containerColor = cardBgItem),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, borderColor),
+                        elevation = CardDefaults.cardElevation(defaultElevation = if (alert.isRead) 0.dp else 1.dp)
                     ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = if (isBug) Icons.Default.Warning else if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.NotificationsActive,
-                                        contentDescription = null,
-                                        tint = headerColor,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.padding(bottom = 6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(accentColor.copy(alpha = 0.1f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isBug) Icons.Default.Warning else if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.NotificationsActive,
+                                            contentDescription = null,
+                                            tint = accentColor,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                    
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    
                                     Text(
                                         text = alert.title,
-                                        fontSize = 12.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = headerColor
+                                        color = if (alert.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                        modifier = Modifier.weight(1f, fill = false)
                                     )
+                                    
                                     if (isBug && !alert.isRead) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Card(
@@ -6375,28 +6716,41 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                             )
                                         }
                                     }
+                                    
+                                    if (!alert.isRead) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .size(6.dp)
+                                                .clip(RoundedCornerShape(3.dp))
+                                                .background(MaterialTheme.colorScheme.primary)
+                                        )
+                                    }
                                 }
-                                Spacer(modifier = Modifier.height(4.dp))
+                                
                                 Text(
                                     text = alert.message,
                                     fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurface
+                                    color = if (alert.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurface,
+                                    lineHeight = 16.sp,
+                                    modifier = Modifier.padding(bottom = 6.dp)
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
                                 
-                                // Preview bug screenshot attachment if there is one!
                                 if (!alert.photoUri.isNullOrBlank()) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
                                         modifier = Modifier
-                                            .padding(top = 4.dp)
+                                            .padding(vertical = 6.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
                                             .clickable { activeScreenshotUri = alert.photoUri }
+                                            .padding(4.dp)
                                     ) {
                                         Card(
                                             modifier = Modifier
-                                                .size(60.dp)
-                                                .border(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
-                                            shape = RoundedCornerShape(8.dp)
+                                                .size(52.dp)
+                                                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f), RoundedCornerShape(6.dp)),
+                                            shape = RoundedCornerShape(6.dp)
                                         ) {
                                             AsyncImage(
                                                 model = alert.photoUri,
@@ -6407,22 +6761,58 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                         }
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Column {
-                                            Text("Captura de pantalla", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
-                                            Text("Toca para ampliar 🔍", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text("Ver evidencia adjunta", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                            Text("Toca para ampliar 🔍", fontSize = 8.sp, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
                                         }
                                     }
-                                    Spacer(modifier = Modifier.height(4.dp))
                                 }
 
                                 Text(
                                     text = alert.timestamp,
                                     fontSize = 9.sp,
-                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
                                 )
                             }
                             
-                            IconButton(onClick = { viewModel.clearNotification(alert.id) }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Descartar", tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f), modifier = Modifier.size(18.dp))
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                IconButton(
+                                    onClick = { viewModel.toggleNotificationReadStatus(alert) },
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(
+                                            color = if (alert.isRead) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
+                                            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                ) {
+                                    Icon(
+                                        imageVector = if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.Check,
+                                        contentDescription = if (alert.isRead) "Marcar como no leído" else "Marcar como leído",
+                                        tint = if (alert.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+
+                                IconButton(
+                                    onClick = { viewModel.clearNotification(alert.id) },
+                                    modifier = Modifier
+                                        .size(34.dp)
+                                        .background(
+                                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = "Eliminar alerta",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -6896,78 +7286,7 @@ fun AppSettingsDialog(
 
                 Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-                // Section 2: Configuración de la Nube (Solamente para Administradores)
-                if (currentMember?.isAdmin == true && currentMember?.email != "coordinador@je.org") {
-                    Text(
-                        text = "Configuración de Nube y Privacidad (E2EE)",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
 
-                    var inputUrl by remember { mutableStateOf(cloudSyncUrl) }
-                    var inputKey by remember { mutableStateOf(cloudSecurityKey) }
-                    var showKey by remember { mutableStateOf(false) }
-
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        OutlinedTextField(
-                            value = inputUrl,
-                            onValueChange = { inputUrl = it },
-                            label = { Text("URL Base de Datos (Firebase / KVDB)", fontSize = 11.sp) },
-                            placeholder = { Text("https://example.firebaseio.com/") },
-                            singleLine = true,
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
-                            modifier = Modifier.fillMaxWidth(),
-                            leadingIcon = {
-                                Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                            }
-                        )
-
-                        OutlinedTextField(
-                            value = inputKey,
-                            onValueChange = { inputKey = it },
-                            label = { Text("Clave de Seguridad E2EE (Privacidad)", fontSize = 11.sp) },
-                            placeholder = { Text("Clave de cifrado comunitario") },
-                            singleLine = true,
-                            visualTransformation = if (showKey) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
-                            modifier = Modifier.fillMaxWidth(),
-                            leadingIcon = {
-                                Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                            },
-                            trailingIcon = {
-                                IconButton(onClick = { showKey = !showKey }) {
-                                    Icon(
-                                        imageVector = if (showKey) Icons.Default.CheckCircle else Icons.Default.NotificationsNone,
-                                        contentDescription = "Mostrar clave",
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                        )
-
-                        Button(
-                            onClick = {
-                                if (inputUrl.isNotBlank()) {
-                                    viewModel.updateCloudSyncUrl(inputUrl.trim())
-                                }
-                                viewModel.updateCloudSecurityKey(inputKey.trim())
-                                android.widget.Toast.makeText(context, "Ajustes de Nube guardados ✓", android.widget.Toast.LENGTH_SHORT).show()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Guardar Configuración", fontSize = 12.sp)
-                        }
-                    }
-
-                    Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                }
 
                 // Section 3: Diagnostic information
                 Text(
@@ -7275,6 +7594,14 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
     val cloudDiagnosis by viewModel.cloudDiagnosis.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+    val isDark = when (prefTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    val cardBg2 = if (isDark) MaterialTheme.colorScheme.surface else Color.White
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -7343,7 +7670,7 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
 
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            colors = CardDefaults.cardColors(containerColor = cardBg2),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
         ) {
             Column(
@@ -7446,7 +7773,7 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
 
         Card(
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            colors = CardDefaults.cardColors(containerColor = cardBg2),
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
         ) {
             Column(

@@ -563,13 +563,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 // Track creation in status alerts
-                val notif = EcoNotification(
-                    title = "Miembro Creado 📋",
-                    message = "Admin creó cuenta para: $fullName",
-                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                )
-                repository.insertNotification(notif)
                 if (_prefNotifSistema.value) {
+                    val notif = EcoNotification(
+                        title = "Miembro Creado 📋",
+                        message = "Admin creó cuenta para: $fullName",
+                        timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                    )
+                    repository.insertNotification(notif)
                     triggerSystemNotification("Miembro Creado 📋", "Admin creó cuenta para: $fullName")
                 }
                 viewModelScope.launch(Dispatchers.Main) { onResult(true) }
@@ -610,13 +610,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // Log update
-            val notif = EcoNotification(
-                title = "Perfil Actualizado ✍️",
-                message = "Se editó el carné de ${cleanMember.fullName}",
-                timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            )
-            repository.insertNotification(notif)
             if (_prefNotifSistema.value) {
+                val notif = EcoNotification(
+                    title = "Perfil Actualizado ✍️",
+                    message = "Se editó el carné de ${cleanMember.fullName}",
+                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                )
+                repository.insertNotification(notif)
                 triggerSystemNotification("Perfil Actualizado ✍️", "Se editó el carné de ${cleanMember.fullName}")
             }
             autoSync()
@@ -663,13 +663,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _loggedInMember.value = null
             }
             // Alert coordinator
-            val notif = EcoNotification(
-                title = "Miembro Removido 🗑️",
-                message = "Se eliminó el acceso de: $email",
-                timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            )
-            repository.insertNotification(notif)
             if (_prefNotifSistema.value) {
+                val notif = EcoNotification(
+                    title = "Miembro Removido 🗑️",
+                    message = "Se eliminó el acceso de: $email",
+                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                )
+                repository.insertNotification(notif)
                 triggerSystemNotification("Miembro Removido 🗑️", "Se eliminó el acceso de: $email")
             }
             autoSync()
@@ -722,14 +722,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.insertActivity(activity)
 
             // Alert notification that activity was programmed
-            val calendarPrefix = if (googleCalendarLinked.value) "Sincronizado con Google Calendar 📅: " else ""
-            val notif = EcoNotification(
-                title = "Actividad Creada 🌾",
-                message = "${calendarPrefix}Se programó '$title' para el $date de junio",
-                timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            )
-            repository.insertNotification(notif)
             if (_prefNotifActividades.value) {
+                val calendarPrefix = if (googleCalendarLinked.value) "Sincronizado con Google Calendar 📅: " else ""
+                val notif = EcoNotification(
+                    title = "Actividad Creada 🌾",
+                    message = "${calendarPrefix}Se programó '$title' para el $date de junio",
+                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                )
+                repository.insertNotification(notif)
                 triggerSystemNotification("Nueva Actividad 🌾", "${calendarPrefix}Se programó '$title' para el $date de junio")
             }
             autoSync()
@@ -784,14 +784,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // Generate coordinator notification
-                val timeStamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                val notification = EcoNotification(
-                    title = "Inscripción en Actividad 🌿",
-                    message = "${member.fullName} (${member.role}) se inscribió a '${activity.title}'",
-                    timestamp = timeStamp
-                )
-                repository.insertNotification(notification)
                 if (_prefNotifActividades.value) {
+                    val timeStamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                    val notification = EcoNotification(
+                        title = "Inscripción en Actividad 🌿",
+                        message = "${member.fullName} (${member.role}) se inscribió a '${activity.title}'",
+                        timestamp = timeStamp
+                    )
+                    repository.insertNotification(notification)
                     triggerSystemNotification("Inscripción en Actividad 🌿", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
                 }
             }
@@ -944,13 +944,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // News / Article publication notification
-            val notif = EcoNotification(
-                title = "Artículo Publicado 📰",
-                message = "Se publicó '$title' en la sección de Novedades.",
-                timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-            )
-            repository.insertNotification(notif)
             if (_prefNotifNovedades.value) {
+                val notif = EcoNotification(
+                    title = "Artículo Publicado 📰",
+                    message = "Se publicó '$title' en la sección de Novedades.",
+                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                )
+                repository.insertNotification(notif)
                 triggerSystemNotification("Artículos y Novedades 📰", "Se publicó el artículo: $title")
             }
             autoSync()
@@ -983,6 +983,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleNotificationReadStatus(notification: EcoNotification) {
+        viewModelScope.launch {
+            val updated = notification.copy(isRead = !notification.isRead)
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                repository.insertNotification(updated)
+            }
+            autoSync()
+        }
+    }
+
     fun markNotificationsRead() {
         viewModelScope.launch(Dispatchers.IO) {
             repository.markAllNotificationsAsRead()
@@ -998,6 +1008,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             repository.clearAllNotifications()
             autoSync()
+        }
+    }
+
+    fun clearAllCloudNotifications(onComplete: (Boolean, String) -> Unit = { _, _ -> }) {
+        val url = _cloudSyncUrl.value
+        if (url.isBlank()) {
+            onComplete(false, "La URL de sincronización con la nube está vacía.")
+            return
+        }
+        viewModelScope.launch {
+            try {
+                val success = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    CloudSyncClient.uploadNotifications(url, emptyList())
+                }
+                if (success) {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        repository.clearAllNotifications()
+                    }
+                    scanCloudDatabase()
+                    onComplete(true, "Todas las notificaciones han sido eliminadas de la nube exitosamente.")
+                } else {
+                    onComplete(false, "No se pudo actualizar la base de datos de la nube.")
+                }
+            } catch (e: Exception) {
+                onComplete(false, e.localizedMessage ?: "Error de conexión o red.")
+            }
         }
     }
 
@@ -1067,13 +1103,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 // AI Article notification
-                val notif = EcoNotification(
-                    title = "Asesoría AI Recibida 🧠",
-                    message = "Se generó: $parsedTitle.",
-                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                )
-                repository.insertNotification(notif)
                 if (_prefNotifNovedades.value) {
+                    val notif = EcoNotification(
+                        title = "Asesoría AI Recibida 🧠",
+                        message = "Se generó: $parsedTitle.",
+                        timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                    )
+                    repository.insertNotification(notif)
                     triggerSystemNotification("Asesoría AI Recibida 🧠", "Se generó: $parsedTitle")
                 }
 
@@ -1478,15 +1514,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val result = performCloudMerge(url)
                 _syncState.value = SyncState.Success(result)
-                val notif = EcoNotification(
-                    title = "Nube Sincronizada ☁️",
-                    message = result,
-                    timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                )
-                kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    repository.insertNotification(notif)
-                }
                 if (_prefNotifNube.value) {
+                    val notif = EcoNotification(
+                        title = "Nube Sincronizada ☁️",
+                        message = result,
+                        timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                    )
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        repository.insertNotification(notif)
+                    }
                     triggerSystemNotification("Nube Sincronizada ☁️", result)
                 }
                 onComplete(true, result)
