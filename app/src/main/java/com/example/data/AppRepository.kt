@@ -28,8 +28,10 @@ class AppRepository(private val appDao: AppDao) {
 
     suspend fun insertNotification(notification: EcoNotification) = appDao.insertNotification(notification)
     suspend fun deleteNotificationById(id: Int) = appDao.deleteNotificationById(id)
+    suspend fun deleteExpiredNotifications(currentTime: Long) = appDao.deleteExpiredNotifications(currentTime)
     suspend fun markAllNotificationsAsRead() = appDao.markAllNotificationsAsRead()
     suspend fun clearAllNotifications() = appDao.clearAllNotifications()
+    suspend fun clearNonGlobalNotifications() = appDao.clearNonGlobalNotifications()
 
     suspend fun insertActivity(activity: EcoActivity) = appDao.insertActivity(activity)
     

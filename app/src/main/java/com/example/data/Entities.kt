@@ -68,7 +68,8 @@ data class EcoEnrollment(
     val activityTitle: String,
     val memberEmail: String,
     val memberName: String,
-    val enrolledAt: String = "23/05/2026"
+    val enrolledAt: String = "23/05/2026",
+    val reminderMinutes: Int = -1
 )
 
 @Entity(tableName = "je_notifications")
@@ -79,7 +80,12 @@ data class EcoNotification(
     val message: String,
     val timestamp: String,
     val isRead: Boolean = false,
-    val photoUri: String? = null
+    val photoUri: String? = null,
+    val isGlobalAlert: Boolean = false,
+    val alertButtonText: String? = null,
+    val broadcastIcon: String? = null,
+    val expiryMillis: Long = 0L,
+    val actionUrl: String? = null
 )
 
 @Entity(tableName = "articles")
@@ -102,6 +108,7 @@ data class CloudPreferences(
     val prefNotifActividades: Boolean = true,
     val prefNotifNovedades: Boolean = true,
     val prefNotifNube: Boolean = true,
-    val prefNotifSistema: Boolean = true
+    val prefNotifSistema: Boolean = true,
+    val lastUpdated: Long = 0L
 )
 

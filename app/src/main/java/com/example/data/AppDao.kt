@@ -99,6 +99,9 @@ interface AppDao {
     @Query("DELETE FROM je_notifications WHERE id = :id")
     suspend fun deleteNotificationById(id: Int)
 
+    @Query("DELETE FROM je_notifications WHERE isGlobalAlert = 1 AND expiryMillis > 0 AND expiryMillis < :currentTime")
+    suspend fun deleteExpiredNotifications(currentTime: Long)
+
     @Query("UPDATE je_notifications SET isRead = 1")
     suspend fun markAllNotificationsAsRead()
 
@@ -110,6 +113,9 @@ interface AppDao {
 
     @Query("DELETE FROM je_notifications")
     suspend fun clearAllNotifications()
+
+    @Query("DELETE FROM je_notifications WHERE isGlobalAlert = 0")
+    suspend fun clearNonGlobalNotifications()
 
     @Query("DELETE FROM enrollments")
     suspend fun clearAllEnrollments()

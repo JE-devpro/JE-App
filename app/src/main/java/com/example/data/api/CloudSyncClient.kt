@@ -115,14 +115,31 @@ object CloudSyncClient {
             val preferences = if (preferencesJson != null) parsePreferences(preferencesJson) else null
             
             val userPrefsJson = if (root.containsKey("userPreferences")) moshi.adapter(Any::class.java).toJson(root["userPreferences"]) else null
-            val userPreferences = if (userPrefsJson != null) {
+            val userPreferences = mutableMapOf<String, com.example.data.CloudPreferences>()
+            if (userPrefsJson != null) {
                 try {
-                    userPreferencesMapAdapter.fromJson(userPrefsJson) ?: emptyMap()
+                    userPreferencesMapAdapter.fromJson(userPrefsJson)?.let {
+                        userPreferences.putAll(it)
+                    }
                 } catch (e: Exception) {
-                    emptyMap()
+                    // Ignore error and continue
                 }
-            } else {
-                emptyMap()
+            }
+            root.forEach { (key, value) ->
+                if (key.startsWith("preferences_")) {
+                    val hash = key.substringAfter("preferences_")
+                    if (hash.isNotEmpty()) {
+                        try {
+                            val singleJson = moshi.adapter(Any::class.java).toJson(value)
+                            val prefObj = preferencesAdapter.fromJson(singleJson)
+                            if (prefObj != null) {
+                                userPreferences[hash] = prefObj
+                            }
+                        } catch (e: Exception) {
+                            // Non-blocking catch
+                        }
+                    }
+                }
             }
             
             CloudDatabase(activities, members, notifications, enrollments, articles, preferences, userPreferences)

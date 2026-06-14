@@ -154,12 +154,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val prefNotifSistema = _prefNotifSistema.asStateFlow()
 
     fun getLocalPreferences(): com.example.data.CloudPreferences {
+        val email = _loggedInMember.value?.email
+        val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+        val lastUpdated = sharedPrefs.getLong("pref_last_updated$suffix", 0L)
         return com.example.data.CloudPreferences(
             prefTheme = _prefTheme.value,
             prefNotifActividades = _prefNotifActividades.value,
             prefNotifNovedades = _prefNotifNovedades.value,
             prefNotifNube = _prefNotifNube.value,
-            prefNotifSistema = _prefNotifSistema.value
+            prefNotifSistema = _prefNotifSistema.value,
+            lastUpdated = lastUpdated
         )
     }
 
@@ -172,6 +176,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             putBoolean("pref_notif_novedades$suffix", prefs.prefNotifNovedades)
             putBoolean("pref_notif_nube$suffix", prefs.prefNotifNube)
             putBoolean("pref_notif_sistema$suffix", prefs.prefNotifSistema)
+            putLong("pref_last_updated$suffix", prefs.lastUpdated)
         }.apply()
         _prefTheme.value = prefs.prefTheme
         _prefNotifActividades.value = prefs.prefNotifActividades
@@ -197,7 +202,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePrefTheme(theme: String) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putString("pref_theme$suffix", theme).apply()
+        val now = System.currentTimeMillis()
+        sharedPrefs.edit().apply {
+            putString("pref_theme$suffix", theme)
+            putLong("pref_last_updated$suffix", now)
+        }.apply()
         _prefTheme.value = theme
         uploadPrefsToCloud()
     }
@@ -205,7 +214,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePrefNotifActividades(enabled: Boolean) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putBoolean("pref_notif_actividades$suffix", enabled).apply()
+        val now = System.currentTimeMillis()
+        sharedPrefs.edit().apply {
+            putBoolean("pref_notif_actividades$suffix", enabled)
+            putLong("pref_last_updated$suffix", now)
+        }.apply()
         _prefNotifActividades.value = enabled
         uploadPrefsToCloud()
     }
@@ -213,7 +226,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePrefNotifNovedades(enabled: Boolean) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putBoolean("pref_notif_novedades$suffix", enabled).apply()
+        val now = System.currentTimeMillis()
+        sharedPrefs.edit().apply {
+            putBoolean("pref_notif_novedades$suffix", enabled)
+            putLong("pref_last_updated$suffix", now)
+        }.apply()
         _prefNotifNovedades.value = enabled
         uploadPrefsToCloud()
     }
@@ -221,7 +238,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePrefNotifNube(enabled: Boolean) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putBoolean("pref_notif_nube$suffix", enabled).apply()
+        val now = System.currentTimeMillis()
+        sharedPrefs.edit().apply {
+            putBoolean("pref_notif_nube$suffix", enabled)
+            putLong("pref_last_updated$suffix", now)
+        }.apply()
         _prefNotifNube.value = enabled
         uploadPrefsToCloud()
     }
@@ -229,7 +250,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updatePrefNotifSistema(enabled: Boolean) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        sharedPrefs.edit().putBoolean("pref_notif_sistema$suffix", enabled).apply()
+        val now = System.currentTimeMillis()
+        sharedPrefs.edit().apply {
+            putBoolean("pref_notif_sistema$suffix", enabled)
+            putLong("pref_last_updated$suffix", now)
+        }.apply()
         _prefNotifSistema.value = enabled
         uploadPrefsToCloud()
     }
@@ -322,6 +347,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch(Dispatchers.IO) {
             repository.checkAndSeedData()
+            try {
+                repository.deleteExpiredNotifications(System.currentTimeMillis())
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         viewModelScope.launch {
@@ -772,7 +802,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     activityTitle = activity.title,
                     memberEmail = emailClean,
                     memberName = member.fullName,
-                    enrolledAt = ecuadorTimeStr
+                    enrolledAt = ecuadorTimeStr,
+                    reminderMinutes = -1
                 )
                 repository.insertEnrollment(enrollment)
                 // Add 15 points to member
@@ -794,6 +825,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     repository.insertNotification(notification)
                     triggerSystemNotification("Inscripción en Actividad 🌿", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
                 }
+            }
+            autoSync()
+        }
+    }
+
+    fun setEventReminder(activity: EcoActivity, member: Member, isActive: Boolean, minutes: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val emailClean = member.email.trim().lowercase()
+            val existing = repository.getEnrollmentDirect(activity.id, emailClean)
+            val ectSdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
+            ectSdf.timeZone = java.util.TimeZone.getTimeZone("America/Guayaquil")
+            val ecuadorTimeStr = ectSdf.format(Date()) + " (Ec)"
+            
+            if (existing != null) {
+                val updated = existing.copy(reminderMinutes = if (isActive) minutes else -1)
+                repository.insertEnrollment(updated)
+            } else {
+                val enrollment = EcoEnrollment(
+                    activityId = activity.id,
+                    activityTitle = activity.title,
+                    memberEmail = emailClean,
+                    memberName = member.fullName,
+                    enrolledAt = ecuadorTimeStr,
+                    reminderMinutes = if (isActive) minutes else -1
+                )
+                repository.insertEnrollment(enrollment)
             }
             autoSync()
         }
@@ -1003,10 +1060,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val list = repository.allNotifications.first()
             for (notif in list) {
-                val key = "notif_${notif.title.trim().lowercase()}_${notif.timestamp.trim()}"
-                addTombstone(key)
+                if (!notif.isGlobalAlert) {
+                    val key = "notif_${notif.title.trim().lowercase()}_${notif.timestamp.trim()}"
+                    addTombstone(key)
+                }
             }
-            repository.clearAllNotifications()
+            repository.clearNonGlobalNotifications()
             autoSync()
         }
     }
@@ -1020,14 +1079,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 val success = kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    CloudSyncClient.uploadNotifications(url, emptyList())
+                    val currentNotifs = repository.allNotifications.first()
+                    val globalNotifs = currentNotifs.filter { it.isGlobalAlert }
+                    CloudSyncClient.uploadNotifications(url, globalNotifs)
                 }
                 if (success) {
                     kotlinx.coroutines.withContext(Dispatchers.IO) {
-                        repository.clearAllNotifications()
+                        repository.clearNonGlobalNotifications()
                     }
                     scanCloudDatabase()
-                    onComplete(true, "Todas las notificaciones han sido eliminadas de la nube exitosamente.")
+                    onComplete(true, "Las notificaciones han sido limpiadas, conservando los mensajes de difusión.")
                 } else {
                     onComplete(false, "No se pudo actualizar la base de datos de la nube.")
                 }
@@ -1323,7 +1384,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         localNotifications: List<EcoNotification>,
         remoteNotifications: List<EcoNotification>,
         isFirstSync: Boolean,
-        filterByTombstones: Boolean = true
+        filterByTombstones: Boolean = true,
+        isAdmin: Boolean = false
     ): List<EcoNotification> {
         val merged = mutableListOf<EcoNotification>()
         val localMap = localNotifications.associateBy { "${it.title.trim().lowercase()}_${it.timestamp.trim()}" }
@@ -1333,9 +1395,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val tombstones = getTombstones()
 
         for (key in allKeys) {
-            if (filterByTombstones) {
-                val tombstoneKey = "notif_$key"
-                if (tombstones.contains(tombstoneKey)) {
+            val tombstoneKey = "notif_$key"
+            // If the key is in tombstones:
+            // 1. If filterByTombstones is true, we always skip.
+            // 2. If the user is admin, we also skip so that the deleted status gets propagated to the cloud!
+            if (tombstones.contains(tombstoneKey)) {
+                if (filterByTombstones || isAdmin) {
                     continue
                 }
             }
@@ -1346,7 +1411,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalRead = localNotif.isRead || remoteNotif.isRead
                 merged.add(localNotif.copy(isRead = finalRead))
             } else if (localNotif != null) {
-                merged.add(localNotif)
+                if (localNotif.isGlobalAlert) {
+                    if (isAdmin) {
+                        // Admin keeping locally-created not-yet-synced notification
+                        merged.add(localNotif)
+                    } else {
+                        // Standard member: if it's a global alert but not on the cloud (deleted by admin), discard it!
+                        // This ensures that once the admin deletes it from the cloud, it vanishes from members' devices!
+                    }
+                } else {
+                    merged.add(localNotif)
+                }
             } else {
                 remoteNotif?.let { merged.add(it) }
             }
@@ -1440,8 +1515,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val mergedArticles = smartMergeArticles(localArticles, remoteArticles, isFirstSync)
 
             // Merging Notifications (separate local filtered vs. cloud persisted lists)
-            val localMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true)
-            val cloudMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = false)
+            val localMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true, isAdmin = isUserAdmin)
+            val cloudMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = false, isAdmin = isUserAdmin)
 
             // 4. Upload merged data back to Cloud (Cooperative Bidirectional Synchronization)
             // To ensure all data created or altered locally is fully published and synchronized with the cloud backend,
@@ -1461,14 +1536,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
             
-            // Sync preferences
+            // Sync preferences bidirectionally using timestamps
             val remotePrefs = try { CloudSyncClient.fetchPreferences(url, userEmail) } catch (e: Exception) { null }
+            val localPrefs = getLocalPreferences()
             if (remotePrefs != null) {
-                kotlinx.coroutines.withContext(Dispatchers.Main) {
-                    applyCloudPreferences(remotePrefs)
+                if (localPrefs.lastUpdated > remotePrefs.lastUpdated) {
+                    // Local is newer, upload local to cloud
+                    try {
+                        CloudSyncClient.uploadPreferences(url, localPrefs, userEmail)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload newer local preferences: ${e.localizedMessage}")
+                    }
+                } else if (remotePrefs.lastUpdated > localPrefs.lastUpdated) {
+                    // Cloud is newer, apply cloud to local
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        applyCloudPreferences(remotePrefs)
+                    }
+                } else {
+                    // Timestamps are equal, make sure local is synced or keep remote
+                    kotlinx.coroutines.withContext(Dispatchers.Main) {
+                        applyCloudPreferences(remotePrefs)
+                    }
                 }
             } else {
-                CloudSyncClient.uploadPreferences(url, getLocalPreferences(), userEmail)
+                try {
+                    CloudSyncClient.uploadPreferences(url, localPrefs, userEmail)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload preferences: ${e.localizedMessage}")
+                }
             }
 
             // 5. Overwrite local Room database with the merged data
@@ -1554,11 +1649,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val localNotifications: Int = 0,
         val localEnrollments: Int = 0,
         val localArticles: Int = 0,
+        val localReminders: Int = 0,
         val remoteActivities: Int = 0,
         val remoteMembers: Int = 0,
         val remoteNotifications: Int = 0,
         val remoteEnrollments: Int = 0,
         val remoteArticles: Int = 0,
+        val remoteReminders: Int = 0,
+        val localPrefsCount: Int = 0,
+        val remotePrefsCount: Int = 0,
         val decryptSuccessMembersCount: Int = 0,
         val decryptFailureMembersCount: Int = 0,
         val recommendations: List<String> = emptyList(),
@@ -1593,8 +1692,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val localAct = repository.allActivities.first().size
                 val localMem = repository.allMembers.first().size
                 val localNot = repository.allNotifications.first().size
-                val localEnr = repository.allEnrollments.first().size
+                val localRawEnrollments = repository.allEnrollments.first()
+                val localEnr = localRawEnrollments.size
                 val localArt = repository.allArticles.first().size
+                
+                val localReminders = localRawEnrollments.count { it.reminderMinutes >= 0 }
+                val localPrefsCount = if (_loggedInMember.value != null) 1 else 0
 
                 // Request remote
                 val remoteDb = kotlinx.coroutines.withContext(Dispatchers.IO) {
@@ -1683,6 +1786,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     recs.add("✅ Criptografía robusta: El 100% de los perfiles en la nube ($decryptSuccess/$decryptSuccess) se descifraron correctamente con la clave de seguridad activa de la app.")
                 }
 
+                val remoteReminders = remoteDb.enrollments.count { it.reminderMinutes >= 0 }
+                val remotePrefsCount = remoteDb.userPreferences?.size ?: (if (remoteDb.preferences != null) 1 else 0)
+
+                if (localReminders != remoteReminders) {
+                    val diffRem = localReminders - remoteReminders
+                    if (diffRem > 0) {
+                        recs.add("⏰ Recordatorios locales: Hay $diffRem recordatorios activos en la base local que no se han propagado a la nube. Sincronice para guardarlos.")
+                    } else {
+                        recs.add("⏰ Recordatorios remotos: Hay ${-diffRem} alertas de eventos guardadas en la nube. Se asimilarán automáticamente.")
+                    }
+                } else if (localReminders > 0) {
+                    recs.add("✅ Coherencia de recordatorios: Todos los recordatorios activos ($localReminders) están perfectamente sincronizados con la nube.")
+                }
+
+                if (localPrefsCount != remotePrefsCount) {
+                    recs.add("⚙️ Sincronización de preferencias: Las preferencias individuales de usuario se sincronizaron (Local: $localPrefsCount vs Nube: $remotePrefsCount perfiles).")
+                }
+
                 val diffAct = localAct - remoteDb.activities.size
                 if (diffAct > 0) {
                     recs.add("💡 Desviación local: Existen $diffAct actividades locales nuevas no sincronizadas a nivel de nube. Pruebe subir la consola para actualizar la nube.")
@@ -1705,11 +1826,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     localNotifications = localNot,
                     localEnrollments = localEnr,
                     localArticles = localArt,
+                    localReminders = localReminders,
                     remoteActivities = remoteDb.activities.size,
                     remoteMembers = remoteDb.members.size,
                     remoteNotifications = remoteDb.notifications.size,
                     remoteEnrollments = remoteDb.enrollments.size,
                     remoteArticles = remoteDb.articles.size,
+                    remoteReminders = remoteReminders,
+                    localPrefsCount = localPrefsCount,
+                    remotePrefsCount = remotePrefsCount,
                     decryptSuccessMembersCount = decryptSuccess,
                     decryptFailureMembersCount = decryptFailure,
                     recommendations = recs,
@@ -1813,6 +1938,49 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 e.printStackTrace()
                 launch(Dispatchers.Main) {
                     onError(e.localizedMessage ?: "Error al procesar el reporte de bug en las alertas")
+                }
+            }
+        }
+    }
+
+    fun insertGlobalAlert(
+        title: String,
+        message: String,
+        buttonText: String,
+        photoPath: String? = null,
+        broadcastIcon: String? = null,
+        expiryMillis: Long = 0L,
+        actionUrl: String? = null,
+        onSuccess: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val timestampStr = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                val base64Photo = photoPath?.let { convertImageToBase64(it) } ?: photoPath
+                val newNotification = EcoNotification(
+                    title = title,
+                    message = message,
+                    timestamp = timestampStr,
+                    isRead = false,
+                    photoUri = base64Photo,
+                    isGlobalAlert = true,
+                    alertButtonText = buttonText.ifBlank { "Aceptar" },
+                    broadcastIcon = broadcastIcon,
+                    expiryMillis = expiryMillis,
+                    actionUrl = actionUrl
+                )
+                kotlinx.coroutines.withContext(Dispatchers.IO) {
+                    repository.insertNotification(newNotification)
+                }
+                autoSync()
+                launch(Dispatchers.Main) {
+                    onSuccess()
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                launch(Dispatchers.Main) {
+                    onError(e.localizedMessage ?: "Error al guardar el anuncio global")
                 }
             }
         }

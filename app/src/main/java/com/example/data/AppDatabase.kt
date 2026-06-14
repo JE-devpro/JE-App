@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [EcoActivity::class, CarnetProfile::class, Member::class, EcoEnrollment::class, EcoNotification::class, EcoArticle::class],
-    version = 12,
+    version = 16,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

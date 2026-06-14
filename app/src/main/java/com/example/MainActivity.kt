@@ -73,6 +73,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+
 
 fun copyUriToLocalStorage(context: Context, uri: android.net.Uri): String? {
     return try {
@@ -234,10 +237,14 @@ fun MainScreen(viewModel: AppViewModel) {
     val rawNotifications by viewModel.allNotifications.collectAsStateWithLifecycle()
     val isUserAdmin = currentMember.isAdmin || currentMember.email == "coordinador@je.org"
     val notifications = remember(rawNotifications, isUserAdmin) {
+        val now = System.currentTimeMillis()
+        val nonExpired = rawNotifications.filter { alert ->
+            !alert.isGlobalAlert || alert.expiryMillis == 0L || now <= alert.expiryMillis
+        }
         if (isUserAdmin) {
-            rawNotifications
+            nonExpired
         } else {
-            rawNotifications.filter { it.title != "Inscripción en Actividad 🌿" }
+            nonExpired.filter { it.title != "Inscripción en Actividad 🌿" }
         }
     }
     val googleCalendarLinked by viewModel.googleCalendarLinked.collectAsStateWithLifecycle()
@@ -264,6 +271,21 @@ fun MainScreen(viewModel: AppViewModel) {
     // Determine Coordinator Mode
     val isCoordinadorMode = (currentMember.email == "coordinador@je.org") || currentMember.isAdmin || isOverrideCoordinator
 
+    val context = LocalContext.current
+    val alertPrefs = remember(currentMember.email) {
+        context.getSharedPreferences("global_alerts_prefs", Context.MODE_PRIVATE)
+    }
+    val localDismissedAlerts = remember { androidx.compose.runtime.mutableStateMapOf<Int, Boolean>() }
+    val activeGlobalAlert = remember(rawNotifications, currentMember.email, localDismissedAlerts.size) {
+        val now = System.currentTimeMillis()
+        rawNotifications.firstOrNull { alert ->
+            alert.isGlobalAlert && 
+            (alert.expiryMillis == 0L || now <= alert.expiryMillis) &&
+            !alertPrefs.getBoolean("global_alert_dismissed_${currentMember.email}_${alert.id}", false) &&
+            localDismissedAlerts[alert.id] != true
+        }
+    }
+
     // UI Local Modals
     var showAddActivityDialog by remember { mutableStateOf(false) }
     var showAddReportDialog by remember { mutableStateOf(false) }
@@ -271,6 +293,16 @@ fun MainScreen(viewModel: AppViewModel) {
     var showProfileMenu by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showBugReportDialog by remember { mutableStateOf(false) }
+
+    if (activeGlobalAlert != null) {
+        GlobalAlertDialog(
+            alert = activeGlobalAlert,
+            onDismiss = {
+                alertPrefs.edit().putBoolean("global_alert_dismissed_${currentMember.email}_${activeGlobalAlert.id}", true).apply()
+                localDismissedAlerts[activeGlobalAlert.id] = true
+            }
+        )
+    }
 
     var selectedActivityForDetail by remember { mutableStateOf<EcoActivity?>(null) }
     var selectedActivityForEdit by remember { mutableStateOf<EcoActivity?>(null) }
@@ -585,6 +617,9 @@ fun MainScreen(viewModel: AppViewModel) {
                     NavigationTab.CALENDAR -> {
                         CalendarTab(
                             activities = mappedActivitiesByEnrollment,
+                            enrollments = enrollments,
+                            currentMember = currentMember,
+                            viewModel = viewModel,
                             isCoordinadorMode = isCoordinadorMode,
                             onToggleEnroll = { viewModel.toggleEnrollment(it, currentMember) },
                             onDeleteActivity = { viewModel.deleteActivity(it) },
@@ -1098,12 +1133,23 @@ fun ActivitiesTab(
         ) {
             items(categories) { cat ->
                 val isSelected = selectedCategoryFilter == cat
+                val tabColor = when (cat.lowercase()) {
+                    "voluntariado" -> Color(0xFF047857)
+                    "educación" -> Color(0xFFD97706)
+                    "asamblea general" -> Color(0xFF7C3AED)
+                    "actividad" -> Color(0xFF0284C7)
+                    else -> MaterialTheme.colorScheme.primary
+                }
                 val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+                    targetValue = if (isSelected) tabColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
                     label = "bgColor"
                 )
                 val textColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                    targetValue = if (isSelected) {
+                        if (cat.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     label = "textColor"
                 )
                 
@@ -1195,12 +1241,39 @@ fun ActivityCard(
     onClick: () -> Unit
 ) {
     val categoryStyle = remember(item.category) {
-        when (item.category.lowercase()) {
-            "reforestación" -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), Icons.Filled.Eco)
-            "limpieza" -> Triple(Color(0xFFE0F2FE), Color(0xFF0284C7), Icons.Filled.WaterDrop)
+        when (item.category.trim().lowercase()) {
+            "reforestación", "je-ambiente" -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), Icons.Filled.Eco)
+            "limpieza", "je-visual" -> Triple(Color(0xFFE0F2FE), Color(0xFF0284C7), Icons.Filled.WaterDrop)
             "educación" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.School)
             "conservación" -> Triple(Color(0xFFE5E7E2), Color(0xFF394931), Icons.Filled.Forest)
+            "je-ram" -> Triple(Color(0xFFECFDF5), Color(0xFF059669), Icons.Filled.Eco)
+            "je-mental" -> Triple(Color(0xFFF3E8FF), Color(0xFF7C3AED), Icons.Filled.Eco)
+            "je-podcast" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.Eco)
+            "je-360" -> Triple(Color(0xFFE0F2FE), Color(0xFF2563EB), Icons.Filled.Eco)
+            "je-vih" -> Triple(Color(0xFFFFE4E6), Color(0xFFE11D48), Icons.Filled.Eco)
             else -> Triple(Color(0xFFEAECE9), Color(0xFF4C5E43), Icons.Filled.NaturePeople)
+        }
+    }
+
+    val eventTypeIcon = remember(item.eventType) {
+        when (item.eventType.trim().lowercase()) {
+            "voluntariado" -> Icons.Filled.Favorite
+            "educación" -> Icons.Filled.School
+            "asamblea general" -> Icons.Filled.Groups
+            "actividad" -> Icons.Filled.Event
+            else -> Icons.Filled.LocalActivity
+        }
+    }
+
+    val typeColor = remember(item.eventType) {
+        when (item.eventType.lowercase()) {
+            "voluntariado" -> Color(0xFF047857)
+            "educación" -> Color(0xFFD97706)
+            "asamblea general" -> Color(0xFF7C3AED)
+            "actividad" -> Color(0xFF0284C7)
+            "talleres" -> Color(0xFFD97706)
+            "charlas" -> Color(0xFF0284C7)
+            else -> Color(0xFF6B7280)
         }
     }
 
@@ -1219,18 +1292,18 @@ fun ActivityCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Category Styled Left Box
+                // Type Styled Left Box
                 Box(
                     modifier = Modifier
                         .size(46.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(categoryStyle.first),
+                        .background(typeColor.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = categoryStyle.third,
+                        imageVector = eventTypeIcon,
                         contentDescription = item.category,
-                        tint = categoryStyle.second,
+                        tint = typeColor,
                         modifier = Modifier.size(22.dp)
                     )
                 }
@@ -1239,16 +1312,41 @@ fun ActivityCard(
                 
                 // Text columns
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Text(
                             text = "${item.date} • ${item.category}".uppercase(),
-                            color = categoryStyle.second,
+                            color = MaterialTheme.colorScheme.primary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.5.sp
+                            letterSpacing = 0.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
+                        
+                        // Event Type badge
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(typeColor.copy(alpha = 0.1f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+							Text(
+								text = item.eventType.uppercase(),
+								color = typeColor,
+								fontSize = 8.sp,
+								fontWeight = FontWeight.Bold,
+								letterSpacing = 0.5.sp,
+								maxLines = 1,
+								softWrap = false
+							)
+                        }
+
                         if (item.isMandatory) {
-                            Spacer(modifier = Modifier.width(6.dp))
                             Box(
                                 modifier = Modifier
                                     .background(Color(0xFFFEE2E2), shape = RoundedCornerShape(4.dp))
@@ -1258,7 +1356,9 @@ fun ActivityCard(
                                     text = "OBLIGATORIA",
                                     color = Color(0xFF991B1B),
                                     fontSize = 8.sp,
-                                    fontWeight = FontWeight.ExtraBold
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 1,
+                                    softWrap = false
                                 )
                             }
                         }
@@ -1376,7 +1476,8 @@ fun AddActivityDialog(
 ) {
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
-    var date by remember { mutableStateOf("2026-06-05") }
+    var datePart by remember { mutableStateOf("2026-06-05") }
+    var timePart by remember { mutableStateOf("10:00") }
     
     // Location parameters
     var loc by remember { mutableStateOf("") }
@@ -1554,13 +1655,25 @@ fun AddActivityDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
 
-                                OutlinedTextField(
-                                    value = date,
-                                    onValueChange = { date = it },
-                                    label = { Text("Fecha de inicio (AAAA-MM-DD)") },
+                                Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
-                                )
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = datePart,
+                                        onValueChange = { datePart = it },
+                                        label = { Text("Fecha (AAAA-MM-DD)") },
+                                        modifier = Modifier.weight(1.3f),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = timePart,
+                                        onValueChange = { timePart = it },
+                                        label = { Text("Hora (HH:MM)") },
+                                        modifier = Modifier.weight(0.9f),
+                                        singleLine = true
+                                    )
+                                }
 
                                 Spacer(modifier = Modifier.height(4.dp))
                                 
@@ -1786,7 +1899,7 @@ fun AddActivityDialog(
                                 onAdd(
                                     title,
                                     desc,
-                                    date,
+                                    "${datePart.trim()} ${timePart.trim()}",
                                     finalLoc,
                                     country,
                                     cat,
@@ -2508,35 +2621,6 @@ fun CarnetTab(
                         }
                     }
                 }
-
-                if (!isCoordinadorMode) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
-                        ),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Text(
-                                text = "Este carnet es oficial y emitido directamente por la Central de Jóvenes y Ecosistemas Latinoamérica. Para editarlo, habilite el Modo Coordinador arriba con el código secreto.",
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
             }
         }
 
@@ -2847,7 +2931,7 @@ fun FeedTab(
 ) {
     val searchQuery = ""
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
-    val categories = listOf("Todos", "JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "Conservación", "Comunidad")
+    val categories = listOf("Todos", "JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "JE-360", "JE-VIH", "Conservación", "Comunidad")
     var articleToDelete by remember { mutableStateOf<EcoArticle?>(null) }
 
     if (articleToDelete != null) {
@@ -2971,13 +3055,29 @@ fun FeedTab(
         ) {
             items(categories) { cat ->
                 val isSelected = selectedCategoryFilter == cat
+                val tabColor = when (cat.lowercase()) {
+                    "je-ram" -> Color(0xFFDC2626)          // Vibrant Red for antimicrobial resistance
+                    "je-mental" -> Color(0xFF7C3AED)       // Purple for headspace / mental
+                    "je-ambiente" -> Color(0xFF047857)     // Emerald green for environment
+                    "je-podcast" -> Color(0xFFD97706)      // Amber/orange for podcasts
+                    "je-visual" -> Color(0xFF0284C7)       // Sky blue for visuals
+                    "je-360" -> Color(0xFF2563EB)          // Royal Blue for 360 / global
+                    "je-vih" -> Color(0xFFE11D48)          // Rose/Red for HIV health support
+                    "conservación" -> Color(0xFF0F766E)    // Teal for conservation
+                    "comunidad" -> Color(0xFFBE185D)       // Crimson/pink for community
+                    else -> MaterialTheme.colorScheme.primary
+                }
                 val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
-                    label = "bgColor"
+                    targetValue = if (isSelected) tabColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    label = "newsBgColor"
                 )
                 val textColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    label = "textColor"
+                    targetValue = if (isSelected) {
+                        if (cat.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    label = "newsTextColor"
                 )
                 
                 Box(
@@ -3080,9 +3180,19 @@ fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Un
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    val tagText = if (item.isAiGenerated) "📢 BOLETÍN" else "✏️ REPORTE LOCAL"
-                    val tagBg = if (item.isAiGenerated) MaterialTheme.colorScheme.primaryContainer else Color(0xFFECFDF5) // Emerald-50
-                    val tagColor = if (item.isAiGenerated) MaterialTheme.colorScheme.onPrimaryContainer else Color(0xFF059669) // Emerald-600
+                    val projectPrefix = when (item.category.trim().uppercase()) {
+                        "JE-VISUAL" -> "🎨"
+                        "JE-AMBIENTE" -> "🌱"
+                        "JE-RAM" -> "🦠"
+                        "JE-MENTAL" -> "🧠"
+                        "JE-PODCAST" -> "🎙️"
+                        "JE-360" -> "🌐"
+                        "JE-VIH" -> "🎗️"
+                        else -> "🌱"
+                    }
+                    val tagText = if (item.isAiGenerated) "📢 BOLETÍN" else "$projectPrefix ${item.category.uppercase()}"
+                    val tagBg = if (item.isAiGenerated) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                    val tagColor = if (item.isAiGenerated) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSecondaryContainer
 
                     Box(
                         modifier = Modifier
@@ -3102,10 +3212,10 @@ fun ArticleCard(item: EcoArticle, isCoordinadorMode: Boolean, onDelete: () -> Un
                     Spacer(modifier = Modifier.width(8.dp))
 
                     Text(
-                        text = item.category.uppercase(),
+                        text = "•  ${item.region} • ${item.publishDate}",
                         fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
                         letterSpacing = 0.5.sp
                     )
                 }
@@ -3313,7 +3423,7 @@ fun AddReportDialog(
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val defaultCats = listOf("Conservación", "Biodiversidad", "Reforestación", "JE-RAM", "JE-Mental", "Derechos", "Educación")
+                                val defaultCats = listOf("JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "JE-360", "JE-VIH", "Conservación", "Biodiversidad", "Reforestación")
                                 items(defaultCats) { catName ->
                                     val isSelected = category.lowercase() == catName.lowercase()
                                     Box(
@@ -3593,7 +3703,7 @@ fun EditReportDialog(
                                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                             )
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val defaultCats = listOf("Conservación", "Biodiversidad", "Reforestación", "JE-RAM", "JE-Mental", "Derechos", "Educación")
+                                val defaultCats = listOf("JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "JE-360", "JE-VIH", "Conservación", "Biodiversidad", "Reforestación")
                                 items(defaultCats) { catName ->
                                     val isSelected = category.lowercase() == catName.lowercase()
                                     Box(
@@ -4081,6 +4191,9 @@ fun triggerPushNotification(context: Context, activityTitle: String, activityDat
 @Composable
 fun CalendarTab(
     activities: List<EcoActivity>,
+    enrollments: List<com.example.data.EcoEnrollment>,
+    currentMember: com.example.data.Member,
+    viewModel: com.example.ui.AppViewModel,
     isCoordinadorMode: Boolean,
     onToggleEnroll: (EcoActivity) -> Unit,
     onDeleteActivity: (Int) -> Unit,
@@ -4090,6 +4203,7 @@ fun CalendarTab(
     var selectedEventTypeFilter by remember { mutableStateOf("Todos") }
     val eventTypes = listOf("Todos", "Educación", "Asamblea general", "Actividad", "Voluntariado")
     var eventToDelete by remember { mutableStateOf<EcoActivity?>(null) }
+    var reminderEventToConfigure by remember { mutableStateOf<EcoActivity?>(null) }
 
     if (eventToDelete != null) {
         AlertDialog(
@@ -4134,8 +4248,120 @@ fun CalendarTab(
         )
     }
 
+    if (reminderEventToConfigure != null) {
+        val event = reminderEventToConfigure!!
+        val userEnrollment = enrollments.find {
+            it.activityId == event.id &&
+            it.memberEmail.trim().lowercase() == currentMember.email.trim().lowercase()
+        }
+        var reminderActive by remember { mutableStateOf(userEnrollment != null && userEnrollment.reminderMinutes >= 0) }
+        var selectedMinutes by remember { mutableStateOf(if (userEnrollment != null && userEnrollment.reminderMinutes >= 0) userEnrollment.reminderMinutes else 15) }
+
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { reminderEventToConfigure = null },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.NotificationsActive,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text("Recordatorio de Evento 🌿", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Text(
+                        "Configura una alerta personalizada para este evento. Esta configuración es individual de cada miembro y se sincronizará con la nube.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Activar recordatorio", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        androidx.compose.material3.Switch(
+                            checked = reminderActive,
+                            onCheckedChange = { reminderActive = it }
+                        )
+                    }
+
+                    if (reminderActive) {
+                        Text("Tiempo de anticipación:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        
+                        val options = listOf(
+                            0 to "Al comenzar el evento",
+                            5 to "5 minutos antes",
+                            15 to "15 minutos antes",
+                            30 to "30 minutos antes",
+                            60 to "1 hora antes",
+                            1440 to "1 día antes"
+                        )
+                        
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            options.forEach { (mins, label) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (selectedMinutes == mins) MaterialTheme.colorScheme.primary.copy(alpha = 0.1f) else Color.Transparent)
+                                        .clickable { selectedMinutes = mins }
+                                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    androidx.compose.material3.RadioButton(
+                                        selected = selectedMinutes == mins,
+                                        onClick = { selectedMinutes = mins }
+                                    )
+                                    Text(label, fontSize = 13.sp, fontWeight = if (selectedMinutes == mins) FontWeight.Bold else FontWeight.Normal)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.setEventReminder(event, currentMember, reminderActive, selectedMinutes)
+                        if (reminderActive) {
+                            val timeLabel = when (selectedMinutes) {
+                                0 -> "al comenzar el evento"
+                                5 -> "5 minutos antes"
+                                15 -> "15 minutos antes"
+                                30 -> "30 minutos antes"
+                                60 -> "1 hora antes"
+                                1440 -> "1 día antes"
+                                else -> "$selectedMinutes minutos antes"
+                            }
+                            triggerPushNotification(context, event.title, timeLabel)
+                        } else {
+                            Toast.makeText(context, "🚫 Recordatorio Desactivado", Toast.LENGTH_SHORT).show()
+                        }
+                        reminderEventToConfigure = null
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("Guardar", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { reminderEventToConfigure = null }) {
+                    Text("Cancelar")
+                }
+            },
+            shape = RoundedCornerShape(24.dp),
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
     // Selected Day in June 2026
     var selectedDay by remember { mutableStateOf(5) } // June 5 as default selected day
+    val daysInMonth = 30
 
     // Filtered activities based on filter selection
     val filteredActivities = remember(activities, selectedEventTypeFilter) {
@@ -4147,248 +4373,331 @@ fun CalendarTab(
         }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Tab Header
-        Text(
-            text = "Calendario de Eventos".uppercase(),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-            letterSpacing = 1.2.sp
-        )
-        Text(
-            text = "Junio 2026",
-            fontSize = 24.sp,
-            fontWeight = FontWeight.ExtraBold,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
+        item {
+            Column {
+                Text(
+                    text = "Calendario de Eventos".uppercase(),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.2.sp
+                )
+                Text(
+                    text = "Junio 2026",
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        }
 
         // Category Filter Chips
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
-        ) {
-            items(eventTypes) { filter ->
-                val isSelected = selectedEventTypeFilter == filter
-                val bgColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
-                    label = "calendarChipBg"
-                )
-                val textColor by animateColorAsState(
-                    targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
-                    label = "calendarChipText"
-                )
+        item {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+            ) {
+                items(eventTypes) { filter ->
+                    val isSelected = selectedEventTypeFilter == filter
+                    val chipColor = when (filter.lowercase()) {
+                        "voluntariado" -> Color(0xFF047857)
+                        "educación" -> Color(0xFFD97706)
+                        "asamblea general" -> Color(0xFF7C3AED)
+                        "actividad" -> Color(0xFF0284C7)
+                        else -> MaterialTheme.colorScheme.primary
+                    }
+                    val bgColor by animateColorAsState(
+                        targetValue = if (isSelected) chipColor else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        label = "calendarChipBg"
+                    )
+                    val textColor by animateColorAsState(
+                        targetValue = if (isSelected) {
+                            if (filter.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        label = "calendarChipText"
+                    )
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(bgColor)
-                        .clickable { selectedEventTypeFilter = filter }
-                        .padding(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Text(text = filter, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(11.dp))
+                            .background(bgColor)
+                            .clickable { selectedEventTypeFilter = filter }
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(text = filter, color = textColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
 
-        // Calendar visual card container
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-        ) {
-            Column(modifier = Modifier.padding(14.dp)) {
-                // Day names header (Monday to Sunday)
-                val dayHeaders = listOf("L", "M", "M", "J", "V", "S", "D")
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround
-                ) {
-                    dayHeaders.forEach { header ->
-                        Text(
-                            text = header,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.weight(1f)
+        // Calendar visual card container with horizontal hand gestures
+        item {
+            var dragAmountX by remember { mutableStateOf(0f) }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures(
+                            onDragEnd = {
+                                if (dragAmountX > 40f) {
+                                    // Swipe right -> previous day
+                                    selectedDay = (selectedDay - 1).coerceAtLeast(1)
+                                } else if (dragAmountX < -40f) {
+                                    // Swipe left -> next day
+                                    selectedDay = (selectedDay + 1).coerceAtMost(daysInMonth)
+                                }
+                                dragAmountX = 0f
+                            },
+                            onHorizontalDrag = { _, dragAmount ->
+                                dragAmountX += dragAmount
+                            }
                         )
+                    },
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    // Day names header (Monday to Sunday)
+                    val dayHeaders = listOf("L", "M", "M", "J", "V", "S", "D")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceAround
+                    ) {
+                        dayHeaders.forEach { header ->
+                            Text(
+                                text = header,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                // Days of June 2026 (Starts on Monday, so 1 to 30 grid is direct)
-                val daysInMonth = 30
-                
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    for (row in 0 until 5) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceAround
-                        ) {
-                            for (col in 0 until 7) {
-                                val dayNum = (row * 7) + col + 1
-                                if (dayNum <= daysInMonth) {
-                                    // Calc if this day has any activities matching the filter
-                                    val activitiesOnThisDay = filteredActivities.filter {
-                                        extractDayFromDateStr(it.date) == dayNum
-                                    }
-                                    val hasActivities = activitiesOnThisDay.isNotEmpty()
-                                    val isCurrentSelected = selectedDay == dayNum
+                    // Days of June 2026 (Starts on Monday, so 1 to 30 grid is direct)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        for (row in 0 until 5) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceAround
+                            ) {
+                                for (col in 0 until 7) {
+                                    val dayNum = (row * 7) + col + 1
+                                    if (dayNum <= daysInMonth) {
+                                        // Calc if this day has any activities matching the filter
+                                        val activitiesOnThisDay = filteredActivities.filter {
+                                            extractDayFromDateStr(it.date) == dayNum
+                                        }
+                                        val hasActivities = activitiesOnThisDay.isNotEmpty()
+                                        val isCurrentSelected = selectedDay == dayNum
 
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .aspectRatio(1f)
-                                            .padding(2.dp)
-                                            .clip(CircleShape)
-                                            .background(
-                                                when {
-                                                    isCurrentSelected -> MaterialTheme.colorScheme.primary
-                                                    hasActivities -> MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                                                    else -> Color.Transparent
-                                                }
-                                            )
-                                            .clickable { selectedDay = dayNum },
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.Center
-                                        ) {
-                                            Text(
-                                                text = dayNum.toString(),
-                                                fontSize = 13.sp,
-                                                fontWeight = if (isCurrentSelected || hasActivities) FontWeight.Bold else FontWeight.Medium,
-                                                color = when {
-                                                    isCurrentSelected -> MaterialTheme.colorScheme.onPrimary
-                                                    hasActivities -> MaterialTheme.colorScheme.primary
-                                                    else -> MaterialTheme.colorScheme.onSurface
-                                                }
-                                            )
-                                            if (hasActivities && !isCurrentSelected) {
-                                                Spacer(modifier = Modifier.height(2.dp))
-                                                Box(
-                                                    modifier = Modifier
-                                                        .size(4.dp)
-                                                        .clip(CircleShape)
-                                                        .background(
-                                                            when (activitiesOnThisDay.firstOrNull()?.eventType?.lowercase()) {
-                                                                "talleres" -> Color(0xFFD97706)
-                                                                "voluntariado" -> Color(0xFF047857)
-                                                                "charlas" -> Color(0xFF0284C7)
-                                                                else -> MaterialTheme.colorScheme.primary
-                                                            }
-                                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .aspectRatio(1f)
+                                                .padding(3.dp)
+                                                .clip(CircleShape)
+                                                .background(
+                                                    when {
+                                                        isCurrentSelected -> MaterialTheme.colorScheme.primaryContainer
+                                                        hasActivities -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                                        else -> Color.Transparent
+                                                    }
                                                 )
+                                                .border(
+                                                    width = if (isCurrentSelected) 1.5.dp else if (hasActivities) 1.dp else 0.dp,
+                                                    color = if (isCurrentSelected) {
+                                                        MaterialTheme.colorScheme.primary
+                                                    } else if (hasActivities) {
+                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                                    } else {
+                                                        Color.Transparent
+                                                    },
+                                                    shape = CircleShape
+                                                )
+                                                .clickable { selectedDay = dayNum },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Text(
+                                                    text = dayNum.toString(),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = if (isCurrentSelected || hasActivities) FontWeight.Bold else FontWeight.Medium,
+                                                    color = when {
+                                                        isCurrentSelected -> MaterialTheme.colorScheme.onPrimaryContainer
+                                                        hasActivities -> MaterialTheme.colorScheme.primary
+                                                        else -> MaterialTheme.colorScheme.onSurface
+                                                    }
+                                                )
+                                                if (isCurrentSelected) {
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(4.dp)
+                                                            .clip(CircleShape)
+                                                            .background(MaterialTheme.colorScheme.primary)
+                                                    )
+                                                } else if (hasActivities) {
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Row(
+                                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        val uniqueTypes = activitiesOnThisDay.map { it.eventType.lowercase() }.distinct()
+                                                        uniqueTypes.take(3).forEach { evType ->
+                                                            Box(
+                                                                modifier = Modifier
+                                                                    .size(4.dp)
+                                                                    .clip(CircleShape)
+                                                                    .background(
+                                                                        when (evType) {
+                                                                            "voluntariado" -> Color(0xFF047857)
+                                                                            "educación" -> Color(0xFFD97706)
+                                                                            "asamblea general" -> Color(0xFF7C3AED)
+                                                                            "actividad" -> Color(0xFF0284C7)
+                                                                            "talleres" -> Color(0xFFD97706)
+                                                                            "charlas" -> Color(0xFF0284C7)
+                                                                            else -> MaterialTheme.colorScheme.primary
+                                                                        }
+                                                                    )
+                                                            )
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
+                                    } else {
+                                        Spacer(modifier = Modifier.weight(1f))
                                     }
-                                } else {
-                                    Spacer(modifier = Modifier.weight(1f))
                                 }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "◀  Desliza para cambiar de día  ▶",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                            letterSpacing = 0.5.sp
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
         // Activities Section Title
-        Text(
-            text = "EVENTOS DEL DÍA $selectedDay DE JUNIO:".uppercase(),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.40f),
-            letterSpacing = 1.sp,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
+        item {
+            Text(
+                text = "EVENTOS DEL DÍA $selectedDay DE JUNIO:".uppercase(),
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.40f),
+                letterSpacing = 1.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+        }
 
         // Find activities for selected day
         val dayFilteredActivities = filteredActivities.filter { extractDayFromDateStr(it.date) == selectedDay }
 
         if (dayFilteredActivities.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
-                    .padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        imageVector = Icons.Filled.DateRange,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
-                        modifier = Modifier.size(48.dp)
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "No hay eventos programados",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
-                    Text(
-                        text = "Elige otro día o remueve los filtros para explorar actividades.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
-                        textAlign = TextAlign.Center
-                    )
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Filled.DateRange,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.2f),
+                            modifier = Modifier.size(48.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "No hay eventos programados",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                        )
+                        Text(
+                            text = "Elige otro día o remueve los filtros para explorar actividades.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 96.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                items(dayFilteredActivities, key = { it.id }) { event ->
-                    CalendarEventCard(
-                        event = event,
-                        isCoordinadorMode = isCoordinadorMode,
-                        onDelete = { eventToDelete = event },
-                        onRegister = { onToggleEnroll(event) },
-                        onAddToPersonalCalendar = {
-                            // Launch Implicit Intent to Calendar
-                            try {
-                                val calendarIntent = Intent(Intent.ACTION_INSERT).apply {
-                                    data = CalendarContract.Events.CONTENT_URI
-                                    putExtra(CalendarContract.Events.TITLE, event.title)
-                                    putExtra(CalendarContract.Events.DESCRIPTION, "${event.description} \n\nOrganizado por: ${event.organizer}")
-                                    putExtra(CalendarContract.Events.EVENT_LOCATION, "${event.location}, ${event.country}")
-                                    
-                                    val parts = event.date.split("-")
-                                    val calendar = Calendar.getInstance()
-                                    if (parts.size >= 3) {
-                                        calendar.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 10, 0)
-                                    }
-                                    putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, calendar.timeInMillis)
-                                    putExtra(CalendarContract.EXTRA_EVENT_END_TIME, calendar.timeInMillis + 2 * 60 * 60 * 1000)
-                                }
-                                context.startActivity(calendarIntent)
-                            } catch (e: Exception) {
-                                Toast.makeText(context, "No se puede abrir la aplicación de calendario", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        onSchedulePushReminder = {
-                            triggerPushNotification(context, event.title, event.date)
-                        },
-                        onClick = { onCardClick(event) }
-                    )
+            items(dayFilteredActivities, key = { it.id }) { event ->
+                val userEnrollment = enrollments.find {
+                    it.activityId == event.id &&
+                    it.memberEmail.trim().lowercase() == currentMember.email.trim().lowercase()
                 }
+                val isReminderActive = userEnrollment != null && userEnrollment.reminderMinutes >= 0
+                val reminderMinutes = userEnrollment?.reminderMinutes ?: -1
+
+                CalendarEventCard(
+                    event = event,
+                    isCoordinadorMode = isCoordinadorMode,
+                    isReminderActive = isReminderActive,
+                    reminderMinutes = reminderMinutes,
+                    onDelete = { eventToDelete = event },
+                    onRegister = { onToggleEnroll(event) },
+                    onAddToPersonalCalendar = {
+                        // Launch Implicit Intent to Calendar
+                        try {
+                            val calendarIntent = Intent(Intent.ACTION_INSERT).apply {
+                                data = CalendarContract.Events.CONTENT_URI
+                                putExtra(CalendarContract.Events.TITLE, event.title)
+                                putExtra(CalendarContract.Events.DESCRIPTION, "${event.description} \n\nOrganizado por: ${event.organizer}")
+                                putExtra(CalendarContract.Events.EVENT_LOCATION, "${event.location}, ${event.country}")
+                                
+                                val parts = event.date.split("-")
+                                val calendar = Calendar.getInstance()
+                                if (parts.size >= 3) {
+                                    calendar.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 10, 0)
+                                }
+                                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, calendar.timeInMillis)
+                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, calendar.timeInMillis + 2 * 60 * 60 * 1000)
+                            }
+                            context.startActivity(calendarIntent)
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "No se puede abrir la aplicación de calendario", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onSchedulePushReminder = {
+                        reminderEventToConfigure = event
+                    },
+                    onClick = { onCardClick(event) }
+                )
             }
         }
     }
@@ -4398,6 +4707,8 @@ fun CalendarTab(
 fun CalendarEventCard(
     event: EcoActivity,
     isCoordinadorMode: Boolean,
+    isReminderActive: Boolean = false,
+    reminderMinutes: Int = -1,
     onDelete: () -> Unit,
     onRegister: () -> Unit,
     onAddToPersonalCalendar: () -> Unit,
@@ -4406,70 +4717,117 @@ fun CalendarEventCard(
 ) {
     val typeColor = remember(event.eventType) {
         when (event.eventType.lowercase()) {
-            "talleres" -> Color(0xFFD97706)
             "voluntariado" -> Color(0xFF047857)
+            "educación" -> Color(0xFFD97706)
+            "asamblea general" -> Color(0xFF7C3AED)
+            "actividad" -> Color(0xFF0284C7)
+            "talleres" -> Color(0xFFD97706)
             "charlas" -> Color(0xFF0284C7)
             else -> Color(0xFF6B7280)
         }
     }
 
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() },
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = androidx.compose.foundation.BorderStroke(1.dp, typeColor.copy(alpha = 0.15f)),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.5.dp)
+        border = androidx.compose.foundation.BorderStroke(1.2.dp, typeColor.copy(alpha = 0.25f)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
-        Column(modifier = Modifier.padding(14.dp)) {
+        Column(modifier = Modifier.padding(16.dp)) {
             // Header Row: Type Badge + Actions
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Event Type tag badge
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(typeColor.copy(alpha = 0.1f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = event.eventType.uppercase(),
-                        color = typeColor,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.8.sp
-                    )
+                    // Event Type tag badge
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(typeColor.copy(alpha = 0.12f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp)
+                    ) {
+                        Text(
+                            text = event.eventType.uppercase(),
+                            color = typeColor,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 0.8.sp
+                        )
+                    }
+
+                    if (isReminderActive) {
+                        val label = when (reminderMinutes) {
+                            0 -> "al comenzar"
+                            5 -> "5 min antes"
+                            15 -> "15 min antes"
+                            30 -> "30 min antes"
+                            60 -> "1 h antes"
+                            1440 -> "1 d antes"
+                            else -> "$reminderMinutes min"
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.NotificationsActive,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(10.dp)
+                                )
+                                Text(
+                                    text = "ALERTA: $label",
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     // Quick Push Reminder Button
                     IconButton(
                         onClick = onSchedulePushReminder,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Filled.NotificationsActive,
+                            imageVector = if (isReminderActive) Icons.Filled.NotificationsActive else Icons.Outlined.Notifications,
                             contentDescription = "Programar Alerta",
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(16.dp)
+                            tint = if (isReminderActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.size(20.dp)
                         )
                     }
 
                     // Add to personal calendar
                     IconButton(
                         onClick = onAddToPersonalCalendar,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(32.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Filled.CalendarToday,
                             contentDescription = "Añadir a Calendario Personal",
                             tint = typeColor,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(18.dp)
                         )
                     }
 
@@ -4477,42 +4835,42 @@ fun CalendarEventCard(
                     if (isCoordinadorMode) {
                         IconButton(
                             onClick = onDelete,
-                            modifier = Modifier.size(28.dp)
+                            modifier = Modifier.size(32.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Filled.DeleteOutline,
                                 contentDescription = "Borrar",
-                                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                modifier = Modifier.size(16.dp)
+                                tint = MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             // Event Title
             Text(
                 text = event.title,
-                fontSize = 15.sp,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface
             )
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Short Description
             Text(
                 text = event.description,
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                lineHeight = 15.sp,
+                lineHeight = 16.sp,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             // Meta Row
             Row(
@@ -4521,42 +4879,53 @@ fun CalendarEventCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Info Column
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
                         Icon(
                             imageVector = Icons.Outlined.LocationOn,
                             contentDescription = null,
                             tint = typeColor,
-                            modifier = Modifier.size(12.dp)
+                            modifier = Modifier.size(13.dp)
                         )
                         Text(
                             text = "${event.location}, ${event.country}",
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
+                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Por: ${event.organizer}",
                         fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f)
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
+                Spacer(modifier = Modifier.width(8.dp))
+
                 // Register Button
                 Button(
-                    shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (event.isUserRegistered) MaterialTheme.colorScheme.primaryContainer else typeColor
                     ),
-                    modifier = Modifier.height(28.dp),
+                    modifier = Modifier.height(38.dp),
                     onClick = onRegister
                 ) {
                     Text(
                         text = if (event.isUserRegistered) "Inscrito ✓" else "Inscribirme",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
                         color = if (event.isUserRegistered) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
                     )
                 }
@@ -6508,6 +6877,432 @@ fun AdminEnrollmentsPanel(viewModel: AppViewModel, enrollments: List<EcoEnrollme
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CreateGlobalAlertDialog(
+    viewModel: AppViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    var title by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var buttonText by remember { mutableStateOf("") }
+    var actionUrl by remember { mutableStateOf("") }
+    var photoUri by remember { mutableStateOf<String?>(null) }
+    var selectedIconName by remember { mutableStateOf("bell") } // "bell", "info", "warning", "celebration", "star", "campaign", "help"
+    var selectedDurationName by remember { mutableStateOf("Siempre visible") } // "1 hora", "1 día", "3 días", "7 días", "Siempre visible"
+    var isSubmitting by remember { mutableStateOf(false) }
+    var showPreview by remember { mutableStateOf(false) }
+
+    val durationOptions = listOf(
+        "1 hora" to 60 * 60 * 1000L,
+        "1 día" to 24 * 60 * 60 * 1000L,
+        "3 días" to 3 * 24 * 60 * 60 * 1000L,
+        "7 días" to 7 * 24 * 60 * 60 * 1000L,
+        "Siempre visible" to 0L
+    )
+
+    val photoLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) {
+            val localPath = copyUriToLocalStorage(context, uri)
+            photoUri = localPath
+        }
+    }
+
+    Dialog(
+        onDismissRequest = { if (!isSubmitting) onDismiss() },
+        properties = androidx.compose.ui.window.DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !isSubmitting,
+            dismissOnClickOutside = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+            ) {
+                // Header (Verde y blanco)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.primary)
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss, enabled = !isSubmitting) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Cerrar",
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Crear Mensaje de Difusión",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                        Text(
+                            text = "Completa los datos para crear un comunicado de alta prioridad",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.8f)
+                        )
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(20.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "Este mensaje se difundirá con prioridad máxima en la aplicación de cada miembro.",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // Input Title
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        label = { Text("Título del Mensaje (ej: Comunicado Urgente)") },
+                        modifier = Modifier.fillMaxWidth().testTag("global_alert_input_title"),
+                        singleLine = true,
+                        enabled = !isSubmitting,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    // Input Message
+                    OutlinedTextField(
+                        value = message,
+                        onValueChange = { message = it },
+                        label = { Text("Mensaje o Contenido") },
+                        modifier = Modifier.fillMaxWidth().height(110.dp).testTag("global_alert_input_message"),
+                        maxLines = 6,
+                        enabled = !isSubmitting,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    // Icon Selector (diverse options)
+                    Text(
+                        text = "Seleccione el Icono para el Mensaje",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    val iconsList = listOf(
+                        Triple("bell", Icons.Filled.NotificationsActive, "Notificación"),
+                        Triple("info", Icons.Filled.Info, "Información"),
+                        Triple("warning", Icons.Filled.Warning, "Advertencia"),
+                        Triple("celebration", Icons.Filled.Celebration, "Celebración"),
+                        Triple("star", Icons.Filled.Star, "Especial"),
+                        Triple("campaign", Icons.Filled.Campaign, "Campaña"),
+                        Triple("help", Icons.Filled.Help, "Ayuda")
+                    )
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(iconsList.size) { index ->
+                            val (key, vector, label) = iconsList[index]
+                            val isSelected = selectedIconName == key
+                            val containerCol = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+                            val tintCol = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(containerCol)
+                                    .clickable(enabled = !isSubmitting) { selectedIconName = key }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = vector,
+                                        contentDescription = label,
+                                        tint = tintCol,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                    Text(
+                                        text = label,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        color = tintCol
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Expiration / Duration Options
+                    Text(
+                        text = "Duración del Mensaje de Difusión",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        durationOptions.forEach { (label, durationMs) ->
+                            val isSelected = selectedDurationName == label
+                            val containerCol = if (isSelected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                            val borderCol = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(containerCol)
+                                    .border(1.dp, borderCol, RoundedCornerShape(10.dp))
+                                    .clickable(enabled = !isSubmitting) { selectedDurationName = label }
+                                    .padding(vertical = 10.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
+                    // Input Button Text
+                    OutlinedTextField(
+                        value = buttonText,
+                        onValueChange = { buttonText = it },
+                        label = { Text("Texto del Botón (ej: Enterado)") },
+                        placeholder = { Text("Aceptar") },
+                        modifier = Modifier.fillMaxWidth().testTag("global_alert_input_btn"),
+                        singleLine = true,
+                        enabled = !isSubmitting,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    // Input Action Link / Hyperlink
+                    OutlinedTextField(
+                        value = actionUrl,
+                        onValueChange = { actionUrl = it },
+                        label = { Text("Enlace / Hipervínculo del Botón (Opcional)") },
+                        placeholder = { Text("https://example.com/mas-informacion") },
+                        leadingIcon = { Icon(imageVector = Icons.Default.Link, contentDescription = "Enlace") },
+                        modifier = Modifier.fillMaxWidth().testTag("global_alert_input_url"),
+                        singleLine = true,
+                        enabled = !isSubmitting,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+
+                    // Optional photograph attachment card
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Imagen Adjunta Opcional",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+
+                            if (photoUri != null) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(120.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = photoUri,
+                                        contentDescription = "Visualización",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    IconButton(
+                                        onClick = { photoUri = null },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .background(Color.Black.copy(alpha = 0.5f), CircleShape)
+                                            .size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Limpiar Foto",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                            } else {
+                                OutlinedButton(
+                                    onClick = {
+                                        photoLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    enabled = !isSubmitting
+                                ) {
+                                    Icon(imageVector = Icons.Default.AddPhotoAlternate, contentDescription = null)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Añadir Imagen", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+
+                    // Botón de Vista Previa
+                    OutlinedButton(
+                        onClick = { showPreview = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("global_alert_preview_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary),
+                        enabled = !isSubmitting
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Visibility,
+                            contentDescription = "Vista Previa"
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Vista Previa del Mensaje",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                // Footer Actions
+                Surface(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding(),
+                    tonalElevation = 1.dp,
+                    shadowElevation = 8.dp
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = 80.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !isSubmitting
+                        ) {
+                            Text("Cancelar")
+                        }
+
+                        Button(
+                            onClick = {
+                                if (title.isBlank() || message.isBlank()) {
+                                    android.widget.Toast.makeText(context, "Por favor complete el título y el mensaje.", android.widget.Toast.LENGTH_SHORT).show()
+                                    return@Button
+                                }
+                                isSubmitting = true
+                                val durationVal = durationOptions.firstOrNull { it.first == selectedDurationName }?.second ?: 0L
+                                val expiry = if (durationVal > 0) System.currentTimeMillis() + durationVal else 0L
+
+                                viewModel.insertGlobalAlert(
+                                    title = title,
+                                    message = message,
+                                    buttonText = buttonText,
+                                    photoPath = photoUri,
+                                    broadcastIcon = selectedIconName,
+                                    expiryMillis = expiry,
+                                    actionUrl = actionUrl.trim().takeIf { it.isNotBlank() },
+                                    onSuccess = {
+                                        android.widget.Toast.makeText(context, "Mensaje de Difusión creado exitosamente 📢", android.widget.Toast.LENGTH_SHORT).show()
+                                        isSubmitting = false
+                                        onDismiss()
+                                    },
+                                    onError = { error ->
+                                        android.widget.Toast.makeText(context, "Error: $error", android.widget.Toast.LENGTH_LONG).show()
+                                        isSubmitting = false
+                                    }
+                                )
+                            },
+                            modifier = Modifier.weight(1.5f).height(48.dp).testTag("global_alert_submit_btn"),
+                            shape = RoundedCornerShape(12.dp),
+                            enabled = !isSubmitting && title.isNotBlank() && message.isNotBlank()
+                        ) {
+                            if (isSubmitting) {
+                                CircularProgressIndicator(modifier = Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            } else {
+                                Icon(imageVector = Icons.Default.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Difundir", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPreview) {
+        val previewAlert = EcoNotification(
+            title = title.ifBlank { "Comunicado de Ejemplo" },
+            message = message.ifBlank { "Este es un ejemplo de cómo se verá el contenido de tu mensaje de difusión cuando se envíe a los miembros de la comunidad." },
+            timestamp = "Hace un momento",
+            isRead = false,
+            photoUri = photoUri,
+            isGlobalAlert = true,
+            alertButtonText = buttonText.ifBlank { "Aceptar" },
+            broadcastIcon = selectedIconName,
+            actionUrl = actionUrl.trim().takeIf { it.isNotBlank() }
+        )
+        GlobalAlertDialog(
+            alert = previewAlert,
+            onDismiss = { showPreview = false }
+        )
+    }
+}
+
 @Composable
 fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotification>) {
     val context = LocalContext.current
@@ -6518,6 +7313,7 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
         else -> androidx.compose.foundation.isSystemInDarkTheme()
     }
     var activeScreenshotUri by remember { mutableStateOf<String?>(null) }
+    var showCreateGlobalAlertDialog by remember { mutableStateOf(false) }
 
     Column(modifier = Modifier.fillMaxSize()) {
         Card(
@@ -6609,7 +7405,33 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                         Text("Limpiar Nube", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                     }
                 }
+
+                Spacer(modifier = Modifier.height(10.dp))
+                Button(
+                    onClick = { showCreateGlobalAlertDialog = true },
+                    modifier = Modifier.fillMaxWidth().height(38.dp).testTag("create_global_alert_btn"),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Campaign,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Crear Mensaje de Difusión", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
+        }
+
+        if (showCreateGlobalAlertDialog) {
+            CreateGlobalAlertDialog(
+                viewModel = viewModel,
+                onDismiss = { showCreateGlobalAlertDialog = false }
+            )
         }
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -6683,8 +7505,26 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                             .background(accentColor.copy(alpha = 0.1f)),
                                         contentAlignment = Alignment.Center
                                     ) {
+                                        val customAlertIcon = if (isBug) {
+                                            Icons.Default.Warning
+                                        } else if (alert.isGlobalAlert) {
+                                            when (alert.broadcastIcon) {
+                                                "bell" -> Icons.Default.NotificationsActive
+                                                "info" -> Icons.Default.Info
+                                                "warning" -> Icons.Default.Warning
+                                                "celebration" -> Icons.Default.Celebration
+                                                "star" -> Icons.Default.Star
+                                                "campaign" -> Icons.Default.Campaign
+                                                "help" -> Icons.Default.Help
+                                                else -> Icons.Default.NotificationsActive
+                                            }
+                                        } else if (alert.isRead) {
+                                            Icons.Default.NotificationsNone
+                                        } else {
+                                            Icons.Default.NotificationsActive
+                                        }
                                         Icon(
-                                            imageVector = if (isBug) Icons.Default.Warning else if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.NotificationsActive,
+                                            imageVector = customAlertIcon,
                                             contentDescription = null,
                                             tint = accentColor,
                                             modifier = Modifier.size(14.dp)
@@ -6701,6 +7541,24 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                         modifier = Modifier.weight(1f, fill = false)
                                     )
                                     
+                                    if (alert.isGlobalAlert) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Card(
+                                            colors = CardDefaults.cardColors(
+                                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                            ),
+                                            shape = RoundedCornerShape(4.dp)
+                                        ) {
+                                            Text(
+                                                text = "DIFUSIÓN",
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+
                                     if (isBug && !alert.isRead) {
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Card(
@@ -7329,6 +8187,159 @@ fun AppSettingsDialog(
     }
 }
 
+@Composable
+fun GlobalAlertDialog(
+    alert: EcoNotification,
+    onDismiss: () -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { /* Force explicit click on Aceptar button */ }
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Box(modifier = Modifier.fillMaxWidth()) {
+                // Close cross icon in the top-right corner
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Cerrar",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                ) {
+                    // Circular speaker/notification icon
+                    val dialogIcon = when (alert.broadcastIcon) {
+                        "bell" -> Icons.Filled.NotificationsActive
+                        "info" -> Icons.Filled.Info
+                        "warning" -> Icons.Filled.Warning
+                        "celebration" -> Icons.Filled.Celebration
+                        "star" -> Icons.Filled.Star
+                        "campaign" -> Icons.Filled.Campaign
+                        "help" -> Icons.Filled.Help
+                        else -> Icons.Filled.NotificationsActive
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)),
+                        contentAlignment = androidx.compose.ui.Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = dialogIcon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.size(28.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // Title of the announcement
+                    Text(
+                        text = alert.title,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    // Optional attached visual card
+                    if (!alert.photoUri.isNullOrEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(160.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = alert.photoUri,
+                                contentDescription = "Anuncio Imagen",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                    }
+
+                    // Message text
+                    Text(
+                        text = alert.message,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(bottom = 20.dp)
+                    )
+
+                    // Action acknowledgement button
+                    val buttonLabel = alert.alertButtonText?.ifBlank { "Aceptar" } ?: "Aceptar"
+                    val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+
+                    Button(
+                        onClick = {
+                            if (!alert.actionUrl.isNullOrBlank()) {
+                                try {
+                                    uriHandler.openUri(alert.actionUrl)
+                                } catch (e: Exception) {
+                                    // Ignore failed URL opening gracefully
+                                }
+                            }
+                            onDismiss()
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .testTag("global_alert_accept_btn"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        )
+                    ) {
+                        if (!alert.actionUrl.isNullOrBlank()) {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = "Enlace",
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                        }
+                        Text(
+                            text = buttonLabel,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun NotificationListDialog(
@@ -7503,6 +8514,23 @@ fun NotificationListDialog(
                                                 fontWeight = FontWeight.Bold,
                                                 color = if (isUnread) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                             )
+                                            if (alert.isGlobalAlert) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Card(
+                                                    colors = CardDefaults.cardColors(
+                                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                                    ),
+                                                    shape = RoundedCornerShape(4.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "DIFUSIÓN",
+                                                        fontSize = 8.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                         Spacer(modifier = Modifier.height(2.dp))
                                         Text(
@@ -7877,7 +8905,9 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                                         "Miembros" to (report.localMembers to report.remoteMembers),
                                         "Artículos" to (report.localArticles to report.remoteArticles),
                                         "Notificaciones" to (report.localNotifications to report.remoteNotifications),
-                                        "Inscripciones" to (report.localEnrollments to report.remoteEnrollments)
+                                        "Inscripciones" to (report.localEnrollments to report.remoteEnrollments),
+                                        "Recordatorios ⏰" to (report.localReminders to report.remoteReminders),
+                                        "Preferencias de Usuario ⚙️" to (report.localPrefsCount to report.remotePrefsCount)
                                     )
                                     
                                     for ((label, counts) in items) {
@@ -8511,7 +9541,10 @@ fun ActivityEditDialog(
 ) {
     var title by remember { mutableStateOf(activity.title) }
     var desc by remember { mutableStateOf(activity.description) }
-    var date by remember { mutableStateOf(activity.date) }
+    val initialDatePart = activity.date.substringBefore(" ").trim()
+    val initialTimePart = if (activity.date.contains(" ")) activity.date.substringAfter(" ").trim() else "10:00"
+    var datePart by remember { mutableStateOf(initialDatePart) }
+    var timePart by remember { mutableStateOf(initialTimePart) }
     
     // Parsing Location parameters
     var isVirtual by remember { mutableStateOf(activity.location.lowercase().contains("virtual") || activity.location.contains("Enlace:")) }
@@ -8715,13 +9748,25 @@ fun ActivityEditDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
 
-                                OutlinedTextField(
-                                    value = date,
-                                    onValueChange = { date = it },
-                                    label = { Text("Fecha de inicio (AAAA-MM-DD)") },
+                                Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true
-                                )
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = datePart,
+                                        onValueChange = { datePart = it },
+                                        label = { Text("Fecha (AAAA-MM-DD)") },
+                                        modifier = Modifier.weight(1.3f),
+                                        singleLine = true
+                                    )
+                                    OutlinedTextField(
+                                        value = timePart,
+                                        onValueChange = { timePart = it },
+                                        label = { Text("Hora (HH:MM)") },
+                                        modifier = Modifier.weight(0.9f),
+                                        singleLine = true
+                                    )
+                                }
 
                                 Spacer(modifier = Modifier.height(4.dp))
                                 
@@ -8947,7 +9992,7 @@ fun ActivityEditDialog(
                                 val updated = activity.copy(
                                     title = title,
                                     description = desc,
-                                    date = date,
+                                    date = "${datePart.trim()} ${timePart.trim()}",
                                     location = finalLoc,
                                     country = country,
                                     category = cat,
