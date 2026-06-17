@@ -17,6 +17,12 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -1318,7 +1324,7 @@ fun ActivityCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = "${item.date} • ${item.category}".uppercase(),
+                            text = "${item.date.substringBefore(" ").trim()} • ${item.category}".uppercase(),
                             color = MaterialTheme.colorScheme.primary,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -1474,10 +1480,53 @@ fun AddActivityDialog(
     onDismiss: () -> Unit,
     onAdd: (String, String, String, String, String, String, String, String, Boolean) -> Unit
 ) {
+    val context = LocalContext.current
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var datePart by remember { mutableStateOf("2026-06-05") }
     var timePart by remember { mutableStateOf("10:00") }
+
+    val showDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (datePart.isNotBlank()) {
+            try {
+                val parts = datePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                datePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showTimePicker = {
+        val hourMinute = timePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 10
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                timePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
     
     // Location parameters
     var loc by remember { mutableStateOf("") }
@@ -1659,20 +1708,61 @@ fun AddActivityDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    OutlinedTextField(
-                                        value = datePart,
-                                        onValueChange = { datePart = it },
-                                        label = { Text("Fecha (AAAA-MM-DD)") },
-                                        modifier = Modifier.weight(1.3f),
-                                        singleLine = true
-                                    )
-                                    OutlinedTextField(
-                                        value = timePart,
-                                        onValueChange = { timePart = it },
-                                        label = { Text("Hora (HH:MM)") },
-                                        modifier = Modifier.weight(0.9f),
-                                        singleLine = true
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1.3f)
+                                            .clickable { showDatePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = datePart,
+                                            onValueChange = {},
+                                            label = { Text("Fecha") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.CalendarToday,
+                                                    contentDescription = "Seleccionar fecha"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(0.9f)
+                                            .clickable { showTimePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = timePart,
+                                            onValueChange = {},
+                                            label = { Text("Hora") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Event,
+                                                    contentDescription = "Seleccionar hora"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(4.dp))
@@ -1896,10 +1986,11 @@ fun AddActivityDialog(
                                 } else {
                                     loc.ifBlank { "Presencial" }
                                 }
+                                val rawEcuadorDateStr = "${datePart.trim()} ${timePart.trim()}"
                                 onAdd(
                                     title,
                                     desc,
-                                    "${datePart.trim()} ${timePart.trim()}",
+                                    rawEcuadorDateStr,
                                     finalLoc,
                                     country,
                                     cat,
@@ -4127,7 +4218,18 @@ fun BugReportDialog(
 
 fun extractDayFromDateStr(dateStr: String): Int? {
     return try {
-        val parts = dateStr.split("-")
+        val trimmed = dateStr.trim()
+        if (trimmed.contains(" ") || trimmed.contains("T")) {
+            val epochMs = com.example.util.TimezoneHelper.parseEcuadorDateTime(trimmed)
+            if (epochMs != null) {
+                val sdf = java.text.SimpleDateFormat("d", java.util.Locale.getDefault()).apply {
+                    timeZone = java.util.TimeZone.getDefault()
+                }
+                return sdf.format(java.util.Date(epochMs)).toIntOrNull()
+            }
+        }
+        val cleanDate = trimmed.substringBefore(" ").substringBefore("T").trim()
+        val parts = cleanDate.split("-")
         if (parts.size >= 3) {
             parts[2].toIntOrNull()
         } else {
@@ -4138,20 +4240,81 @@ fun extractDayFromDateStr(dateStr: String): Int? {
     }
 }
 
+fun extractMonthFromDateStr(dateStr: String): Int? {
+    return try {
+        val trimmed = dateStr.trim()
+        if (trimmed.contains(" ") || trimmed.contains("T")) {
+            val epochMs = com.example.util.TimezoneHelper.parseEcuadorDateTime(trimmed)
+            if (epochMs != null) {
+                val sdf = java.text.SimpleDateFormat("M", java.util.Locale.getDefault()).apply {
+                    timeZone = java.util.TimeZone.getDefault()
+                }
+                return sdf.format(java.util.Date(epochMs)).toInt() - 1 // 0-indexed to match currentMonth
+            }
+        }
+        val cleanDate = trimmed.substringBefore(" ").substringBefore("T").trim()
+        val parts = cleanDate.split("-")
+        if (parts.size >= 2) {
+            parts[1].toInt() - 1 // 0-indexed
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
+fun extractYearFromDateStr(dateStr: String): Int? {
+    return try {
+        val trimmed = dateStr.trim()
+        if (trimmed.contains(" ") || trimmed.contains("T")) {
+            val epochMs = com.example.util.TimezoneHelper.parseEcuadorDateTime(trimmed)
+            if (epochMs != null) {
+                val sdf = java.text.SimpleDateFormat("yyyy", java.util.Locale.getDefault()).apply {
+                    timeZone = java.util.TimeZone.getDefault()
+                }
+                return sdf.format(java.util.Date(epochMs)).toInt()
+            }
+        }
+        val cleanDate = trimmed.substringBefore(" ").substringBefore("T").trim()
+        val parts = cleanDate.split("-")
+        if (parts.isNotEmpty()) {
+            parts[0].toInt()
+        } else {
+            null
+        }
+    } catch (e: Exception) {
+        null
+    }
+}
+
 fun triggerPushNotification(context: Context, activityTitle: String, activityDate: String) {
-    val channelId = "je_app_notifications"
-    val channelName = "Recordatorios de Actividades"
+    val channelId = "je_app_notifications_elegant"
+    val channelName = "Recordatorios de Actividades (Elegante)"
     val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
+    // Buscar si existe un sonido elegante personalizado en res/raw/elegant_chime
+    val soundResId = context.resources.getIdentifier("elegant_chime", "raw", context.packageName)
+    val soundUri = if (soundResId != 0) {
+        android.net.Uri.parse("android.resource://${context.packageName}/$soundResId")
+    } else {
+        android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+    }
+
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val audioAttributes = android.media.AudioAttributes.Builder()
+            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION_EVENT)
+            .build()
         val channel = NotificationChannel(
             channelId,
             channelName,
             NotificationManager.IMPORTANCE_HIGH
         ).apply {
-            description = "Canal para notificaciones de JE-App"
+            description = "Canal para notificaciones con sonido elegante de JE-App"
             enableLights(true)
             enableVibration(true)
+            setSound(soundUri, audioAttributes)
         }
         notificationManager.createNotificationChannel(channel)
     }
@@ -4167,18 +4330,18 @@ fun triggerPushNotification(context: Context, activityTitle: String, activityDat
         android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
     )
 
-    val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
-
     val builder = NotificationCompat.Builder(context, channelId)
         .setSmallIcon(com.example.R.mipmap.ic_launcher)
         .setContentTitle("Recordatorio de Evento 🌿")
         .setContentText("Tienes una actividad programada: $activityTitle para la fecha $activityDate.")
         .setStyle(NotificationCompat.BigTextStyle().bigText("Tienes una actividad programada: $activityTitle para la fecha $activityDate."))
         .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .setSound(defaultSoundUri)
-        .setDefaults(NotificationCompat.DEFAULT_ALL)
+        .setSound(soundUri)
         .setContentIntent(pendingIntent)
         .setAutoCancel(true)
+
+    // Configurar vibración y luces por defecto (sin pisar el Custom Sound)
+    builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE or NotificationCompat.DEFAULT_LIGHTS)
 
     try {
         notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
@@ -4321,6 +4484,74 @@ fun CalendarTab(
                                 }
                             }
                         }
+
+                        // Preview dynamic alarm scheduling in local timezone
+                        val epochMs = com.example.util.TimezoneHelper.parseEcuadorDateTime(event.date)
+                        if (epochMs != null) {
+                            val alertTimeMs = epochMs - (selectedMinutes * 60 * 1000)
+                            val nowMs = System.currentTimeMillis()
+                            val localSdf = java.text.SimpleDateFormat("dd/MM/yyyy HH:mm", java.util.Locale.getDefault()).apply {
+                                timeZone = java.util.TimeZone.getDefault()
+                            }
+                            val eventLocalStr = localSdf.format(java.util.Date(epochMs))
+                            val alertLocalStr = localSdf.format(java.util.Date(alertTimeMs))
+                            
+                            val systemZone = java.util.TimeZone.getDefault()
+                            val zoneName = systemZone.getDisplayName(systemZone.inDaylightTime(java.util.Date(alertTimeMs)), java.util.TimeZone.SHORT, java.util.Locale.getDefault())
+
+                            Card(
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(top = 8.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Sincronización Local",
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    
+                                    val isCatchUp = alertTimeMs <= nowMs && epochMs > nowMs
+                                    if (isCatchUp) {
+                                        Text(
+                                            text = "⚠️ La hora requerida ya pasó en tu región. La alarma sonará de inmediato (en 5 s) como aviso de puesta al día.\n\n• Evento local: $eventLocalStr ($zoneName)",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else if (epochMs <= nowMs) {
+                                        Text(
+                                            text = "🚫 Este evento ya ocurrió en el pasado (${eventLocalStr}). No se disparará alarma activa.",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "• Tu hora local: $zoneName\n• Evento local: $eventLocalStr\n• Alarma programada: $alertLocalStr",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -4338,7 +4569,7 @@ fun CalendarTab(
                                 1440 -> "1 día antes"
                                 else -> "$selectedMinutes minutos antes"
                             }
-                            triggerPushNotification(context, event.title, timeLabel)
+                            Toast.makeText(context, "⏰ Recordatorio programado: $timeLabel", Toast.LENGTH_LONG).show()
                         } else {
                             Toast.makeText(context, "🚫 Recordatorio Desactivado", Toast.LENGTH_SHORT).show()
                         }
@@ -4359,9 +4590,69 @@ fun CalendarTab(
         )
     }
 
-    // Selected Day in June 2026
-    var selectedDay by remember { mutableStateOf(5) } // June 5 as default selected day
-    val daysInMonth = 30
+    var currentYear by remember { mutableStateOf(2026) }
+    var currentMonth by remember { mutableStateOf(5) } // 0-indexed: 5 = June
+    var selectedDay by remember { mutableStateOf(16) } // June 16 as default selected day
+
+    val currentMonthCalendarHelper = remember(currentYear, currentMonth) {
+        java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.YEAR, currentYear)
+            set(java.util.Calendar.MONTH, currentMonth)
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+        }
+    }
+
+    val monthName = remember(currentMonth) {
+        when (currentMonth) {
+            0 -> "Enero"
+            1 -> "Febrero"
+            2 -> "Marzo"
+            3 -> "Abril"
+            4 -> "Mayo"
+            5 -> "Junio"
+            6 -> "Julio"
+            7 -> "Agosto"
+            8 -> "Septiembre"
+            9 -> "Octubre"
+            10 -> "Noviembre"
+            11 -> "Diciembre"
+            else -> "Mes"
+        }
+    }
+
+    val daysInMonth = remember(currentMonthCalendarHelper) {
+        currentMonthCalendarHelper.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+    }
+
+    val firstDayOfWeek = remember(currentMonthCalendarHelper) {
+        currentMonthCalendarHelper.get(java.util.Calendar.DAY_OF_WEEK)
+    }
+
+    val startOffset = remember(firstDayOfWeek) {
+        when (firstDayOfWeek) {
+            java.util.Calendar.MONDAY -> 0
+            java.util.Calendar.TUESDAY -> 1
+            java.util.Calendar.WEDNESDAY -> 2
+            java.util.Calendar.THURSDAY -> 3
+            java.util.Calendar.FRIDAY -> 4
+            java.util.Calendar.SATURDAY -> 5
+            java.util.Calendar.SUNDAY -> 6
+            else -> 0
+        }
+    }
+
+    val totalGridCells = startOffset + daysInMonth
+    val numRows = if (totalGridCells % 7 == 0) totalGridCells / 7 else (totalGridCells / 7) + 1
+
+    LaunchedEffect(currentMonth, currentYear) {
+        val helper = java.util.Calendar.getInstance().apply {
+            set(java.util.Calendar.YEAR, currentYear)
+            set(java.util.Calendar.MONTH, currentMonth)
+            set(java.util.Calendar.DAY_OF_MONTH, 1)
+        }
+        val maxDays = helper.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+        selectedDay = selectedDay.coerceIn(1, maxDays)
+    }
 
     // Filtered activities based on filter selection
     val filteredActivities = remember(activities, selectedEventTypeFilter) {
@@ -4389,7 +4680,7 @@ fun CalendarTab(
                     letterSpacing = 1.2.sp
                 )
                 Text(
-                    text = "Junio 2026",
+                    text = "$monthName $currentYear",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onBackground
@@ -4441,18 +4732,30 @@ fun CalendarTab(
         // Calendar visual card container with horizontal hand gestures
         item {
             var dragAmountX by remember { mutableStateOf(0f) }
-            Card(
+            val currentMonthState = currentMonth + currentYear * 12
+
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .pointerInput(Unit) {
+                    .pointerInput(currentMonthState) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
                                 if (dragAmountX > 40f) {
-                                    // Swipe right -> previous day
-                                    selectedDay = (selectedDay - 1).coerceAtLeast(1)
+                                    // Swipe right -> previous month
+                                    if (currentMonth == 0) {
+                                        currentMonth = 11
+                                        currentYear -= 1
+                                    } else {
+                                        currentMonth -= 1
+                                    }
                                 } else if (dragAmountX < -40f) {
-                                    // Swipe left -> next day
-                                    selectedDay = (selectedDay + 1).coerceAtMost(daysInMonth)
+                                    // Swipe left -> next month
+                                    if (currentMonth == 11) {
+                                        currentMonth = 0
+                                        currentYear += 1
+                                    } else {
+                                        currentMonth += 1
+                                    }
                                 }
                                 dragAmountX = 0f
                             },
@@ -4460,148 +4763,195 @@ fun CalendarTab(
                                 dragAmountX += dragAmount
                             }
                         )
-                    },
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    }
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    // Day names header (Monday to Sunday)
-                    val dayHeaders = listOf("L", "M", "M", "J", "V", "S", "D")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceAround
-                    ) {
-                        dayHeaders.forEach { header ->
-                            Text(
-                                text = header,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.weight(1f)
+                AnimatedContent(
+                    targetState = currentMonthState,
+                    transitionSpec = {
+                        if (targetState > initialState) {
+                            (slideInHorizontally { width -> width } + fadeIn()).togetherWith(
+                                slideOutHorizontally { width -> -width } + fadeOut()
+                            )
+                        } else {
+                            (slideInHorizontally { width -> -width } + fadeIn()).togetherWith(
+                                slideOutHorizontally { width -> width } + fadeOut()
                             )
                         }
+                    },
+                    label = "calendarCardSlide"
+                ) { targetMonthPlusYear ->
+                    val targetYear = targetMonthPlusYear / 12
+                    val targetMonth = targetMonthPlusYear % 12
+
+                    val targetMonthCalendarHelper = java.util.Calendar.getInstance().apply {
+                        set(java.util.Calendar.YEAR, targetYear)
+                        set(java.util.Calendar.MONTH, targetMonth)
+                        set(java.util.Calendar.DAY_OF_MONTH, 1)
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    val targetDaysInMonth = targetMonthCalendarHelper.getActualMaximum(java.util.Calendar.DAY_OF_MONTH)
+                    val targetFirstDayOfWeek = targetMonthCalendarHelper.get(java.util.Calendar.DAY_OF_WEEK)
+                    val targetStartOffset = when (targetFirstDayOfWeek) {
+                        java.util.Calendar.MONDAY -> 0
+                        java.util.Calendar.TUESDAY -> 1
+                        java.util.Calendar.WEDNESDAY -> 2
+                        java.util.Calendar.THURSDAY -> 3
+                        java.util.Calendar.FRIDAY -> 4
+                        java.util.Calendar.SATURDAY -> 5
+                        java.util.Calendar.SUNDAY -> 6
+                        else -> 0
+                    }
+                    val targetTotalGridCells = targetStartOffset + targetDaysInMonth
+                    val targetNumRows = if (targetTotalGridCells % 7 == 0) targetTotalGridCells / 7 else (targetTotalGridCells / 7) + 1
 
-                    // Days of June 2026 (Starts on Monday, so 1 to 30 grid is direct)
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        for (row in 0 until 5) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            // Day names header (Monday to Sunday)
+                            val dayHeaders = listOf("L", "M", "M", "J", "V", "S", "D")
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceAround
                             ) {
-                                for (col in 0 until 7) {
-                                    val dayNum = (row * 7) + col + 1
-                                    if (dayNum <= daysInMonth) {
-                                        // Calc if this day has any activities matching the filter
-                                        val activitiesOnThisDay = filteredActivities.filter {
-                                            extractDayFromDateStr(it.date) == dayNum
-                                        }
-                                        val hasActivities = activitiesOnThisDay.isNotEmpty()
-                                        val isCurrentSelected = selectedDay == dayNum
+                                dayHeaders.forEach { header ->
+                                    Text(
+                                        text = header,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                            }
 
-                                        Box(
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .aspectRatio(1f)
-                                                .padding(3.dp)
-                                                .clip(CircleShape)
-                                                .background(
-                                                    when {
-                                                        isCurrentSelected -> MaterialTheme.colorScheme.primaryContainer
-                                                        hasActivities -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-                                                        else -> Color.Transparent
-                                                    }
-                                                )
-                                                .border(
-                                                    width = if (isCurrentSelected) 1.5.dp else if (hasActivities) 1.dp else 0.dp,
-                                                    color = if (isCurrentSelected) {
-                                                        MaterialTheme.colorScheme.primary
-                                                    } else if (hasActivities) {
-                                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                                                    } else {
-                                                        Color.Transparent
-                                                    },
-                                                    shape = CircleShape
-                                                )
-                                                .clickable { selectedDay = dayNum },
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Column(
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Center
-                                            ) {
-                                                Text(
-                                                    text = dayNum.toString(),
-                                                    fontSize = 13.sp,
-                                                    fontWeight = if (isCurrentSelected || hasActivities) FontWeight.Bold else FontWeight.Medium,
-                                                    color = when {
-                                                        isCurrentSelected -> MaterialTheme.colorScheme.onPrimaryContainer
-                                                        hasActivities -> MaterialTheme.colorScheme.primary
-                                                        else -> MaterialTheme.colorScheme.onSurface
-                                                    }
-                                                )
-                                                if (isCurrentSelected) {
-                                                    Spacer(modifier = Modifier.height(2.dp))
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(4.dp)
-                                                            .clip(CircleShape)
-                                                            .background(MaterialTheme.colorScheme.primary)
-                                                    )
-                                                } else if (hasActivities) {
-                                                    Spacer(modifier = Modifier.height(2.dp))
-                                                    Row(
-                                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                                        verticalAlignment = Alignment.CenterVertically
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Days grid based on starting day offset and target month size
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                for (row in 0 until targetNumRows) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceAround
+                                    ) {
+                                        for (col in 0 until 7) {
+                                            val cellIndex = (row * 7) + col
+                                            val dayNum = cellIndex - targetStartOffset + 1
+                                            if (dayNum in 1..targetDaysInMonth) {
+                                                // Calc if this day has any activities matching the filter
+                                                val activitiesOnThisDay = filteredActivities.filter { activity ->
+                                                    extractDayFromDateStr(activity.date) == dayNum &&
+                                                    extractMonthFromDateStr(activity.date) == targetMonth &&
+                                                    extractYearFromDateStr(activity.date) == targetYear
+                                                }
+                                                val hasActivities = activitiesOnThisDay.isNotEmpty()
+                                                val isCurrentSelected = selectedDay == dayNum && currentMonth == targetMonth && currentYear == targetYear
+
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .aspectRatio(1f)
+                                                        .padding(3.dp)
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            when {
+                                                                isCurrentSelected -> MaterialTheme.colorScheme.primaryContainer
+                                                                hasActivities -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                                                else -> Color.Transparent
+                                                            }
+                                                        )
+                                                        .border(
+                                                            width = if (isCurrentSelected) 1.5.dp else if (hasActivities) 1.dp else 0.dp,
+                                                            color = if (isCurrentSelected) {
+                                                                MaterialTheme.colorScheme.primary
+                                                            } else if (hasActivities) {
+                                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                                                            } else {
+                                                                Color.Transparent
+                                                            },
+                                                            shape = CircleShape
+                                                        )
+                                                        .clickable { selectedDay = dayNum },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Column(
+                                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                                        verticalArrangement = Arrangement.Center
                                                     ) {
-                                                        val uniqueTypes = activitiesOnThisDay.map { it.eventType.lowercase() }.distinct()
-                                                        uniqueTypes.take(3).forEach { evType ->
+                                                        Text(
+                                                            text = dayNum.toString(),
+                                                            fontSize = 13.sp,
+                                                            fontWeight = if (isCurrentSelected || hasActivities) FontWeight.Bold else FontWeight.Medium,
+                                                            color = when {
+                                                                isCurrentSelected -> MaterialTheme.colorScheme.onPrimaryContainer
+                                                                hasActivities -> MaterialTheme.colorScheme.primary
+                                                                else -> MaterialTheme.colorScheme.onSurface
+                                                            }
+                                                        )
+                                                        if (isCurrentSelected) {
+                                                            Spacer(modifier = Modifier.height(2.dp))
                                                             Box(
                                                                 modifier = Modifier
                                                                     .size(4.dp)
                                                                     .clip(CircleShape)
-                                                                    .background(
-                                                                        when (evType) {
-                                                                            "voluntariado" -> Color(0xFF047857)
-                                                                            "educación" -> Color(0xFFD97706)
-                                                                            "asamblea general" -> Color(0xFF7C3AED)
-                                                                            "actividad" -> Color(0xFF0284C7)
-                                                                            "talleres" -> Color(0xFFD97706)
-                                                                            "charlas" -> Color(0xFF0284C7)
-                                                                            else -> MaterialTheme.colorScheme.primary
-                                                                        }
-                                                                    )
+                                                                    .background(MaterialTheme.colorScheme.primary)
                                                             )
+                                                        } else if (hasActivities) {
+                                                            Spacer(modifier = Modifier.height(2.dp))
+                                                            Row(
+                                                                horizontalArrangement = Arrangement.spacedBy(2.dp),
+                                                                verticalAlignment = Alignment.CenterVertically
+                                                            ) {
+                                                                val uniqueTypes = activitiesOnThisDay.map { it.eventType.lowercase() }.distinct()
+                                                                uniqueTypes.take(3).forEach { evType ->
+                                                                    Box(
+                                                                        modifier = Modifier
+                                                                            .size(4.dp)
+                                                                            .clip(CircleShape)
+                                                                            .background(
+                                                                                when (evType) {
+                                                                                    "voluntariado" -> Color(0xFF047857)
+                                                                                    "educación" -> Color(0xFFD97706)
+                                                                                    "asamblea general" -> Color(0xFF7C3AED)
+                                                                                    "actividad" -> Color(0xFF0284C7)
+                                                                                    "talleres" -> Color(0xFFD97706)
+                                                                                    "charlas" -> Color(0xFF0284C7)
+                                                                                    else -> MaterialTheme.colorScheme.primary
+                                                                                }
+                                                                            )
+                                                                    )
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
+                                            } else {
+                                                Spacer(modifier = Modifier.weight(1f))
                                             }
                                         }
-                                    } else {
-                                        Spacer(modifier = Modifier.weight(1f))
                                     }
                                 }
                             }
-                        }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "◀  Desliza para cambiar de día  ▶",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                            letterSpacing = 0.5.sp
-                        )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "◀  Desliza para cambiar de mes  ▶",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -4610,7 +4960,7 @@ fun CalendarTab(
         // Activities Section Title
         item {
             Text(
-                text = "EVENTOS DEL DÍA $selectedDay DE JUNIO:".uppercase(),
+                text = "EVENTOS DEL DÍA $selectedDay DE ${monthName.uppercase()}:",
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.40f),
@@ -4619,8 +4969,12 @@ fun CalendarTab(
             )
         }
 
-        // Find activities for selected day
-        val dayFilteredActivities = filteredActivities.filter { extractDayFromDateStr(it.date) == selectedDay }
+        // Find activities for selected day, month and year
+        val dayFilteredActivities = filteredActivities.filter { activity ->
+            extractDayFromDateStr(activity.date) == selectedDay &&
+            extractMonthFromDateStr(activity.date) == currentMonth &&
+            extractYearFromDateStr(activity.date) == currentYear
+        }
 
         if (dayFilteredActivities.isEmpty()) {
             item {
@@ -4680,13 +5034,17 @@ fun CalendarTab(
                                 putExtra(CalendarContract.Events.DESCRIPTION, "${event.description} \n\nOrganizado por: ${event.organizer}")
                                 putExtra(CalendarContract.Events.EVENT_LOCATION, "${event.location}, ${event.country}")
                                 
-                                val parts = event.date.split("-")
-                                val calendar = Calendar.getInstance()
-                                if (parts.size >= 3) {
-                                    calendar.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 10, 0)
+                                val epochMs = com.example.util.TimezoneHelper.parseEcuadorDateTime(event.date)
+                                val beginTime = epochMs ?: run {
+                                    val parts = event.date.split("-")
+                                    val calendar = Calendar.getInstance()
+                                    if (parts.size >= 3) {
+                                        calendar.set(parts[0].toInt(), parts[1].toInt() - 1, parts[2].toInt(), 10, 0)
+                                    }
+                                    calendar.timeInMillis
                                 }
-                                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, calendar.timeInMillis)
-                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, calendar.timeInMillis + 2 * 60 * 60 * 1000)
+                                putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, beginTime)
+                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, beginTime + 2 * 60 * 60 * 1000)
                             }
                             context.startActivity(calendarIntent)
                         } catch (e: Exception) {
@@ -5275,9 +5633,7 @@ fun LoginScreen(viewModel: AppViewModel) {
                 onClick = {
                     if (email.isNotBlank() && password.isNotBlank()) {
                         viewModel.login(email, password) { success ->
-                            if (success) {
-                                Toast.makeText(context, "Bienvenido a Jóvenes y Ecosistemas 🎉", Toast.LENGTH_SHORT).show()
-                            } else {
+                            if (!success) {
                                 loginError = true
                             }
                         }
@@ -8144,8 +8500,6 @@ fun AppSettingsDialog(
 
                 Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
-
-
                 // Section 3: Diagnostic information
                 Text(
                     text = "Estado y Diagnóstico",
@@ -9199,7 +9553,7 @@ fun ActivityDetailDialog(
 
                 // Metadata Column
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    DetailMetaRow(Icons.Filled.DateRange, "Fecha", activity.date)
+                    DetailMetaRow(Icons.Filled.DateRange, "Fecha", com.example.util.TimezoneHelper.formatActivityDate(activity.date))
                     DetailMetaRow(Icons.Filled.LocationOn, "Lugar", "${activity.location}, ${activity.country}")
                     DetailMetaRow(Icons.Filled.Person, "Organizador", activity.organizer)
                     DetailMetaRow(Icons.Filled.Category, "Tipo de Evento", activity.eventType)
@@ -9539,12 +9893,55 @@ fun ActivityEditDialog(
     onDismissRequest: () -> Unit,
     onSaveClick: (EcoActivity) -> Unit
 ) {
+    val context = LocalContext.current
     var title by remember { mutableStateOf(activity.title) }
     var desc by remember { mutableStateOf(activity.description) }
     val initialDatePart = activity.date.substringBefore(" ").trim()
     val initialTimePart = if (activity.date.contains(" ")) activity.date.substringAfter(" ").trim() else "10:00"
     var datePart by remember { mutableStateOf(initialDatePart) }
     var timePart by remember { mutableStateOf(initialTimePart) }
+
+    val showDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (datePart.isNotBlank()) {
+            try {
+                val parts = datePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                datePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showTimePicker = {
+        val hourMinute = timePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 10
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                timePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
     
     // Parsing Location parameters
     var isVirtual by remember { mutableStateOf(activity.location.lowercase().contains("virtual") || activity.location.contains("Enlace:")) }
@@ -9752,20 +10149,61 @@ fun ActivityEditDialog(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    OutlinedTextField(
-                                        value = datePart,
-                                        onValueChange = { datePart = it },
-                                        label = { Text("Fecha (AAAA-MM-DD)") },
-                                        modifier = Modifier.weight(1.3f),
-                                        singleLine = true
-                                    )
-                                    OutlinedTextField(
-                                        value = timePart,
-                                        onValueChange = { timePart = it },
-                                        label = { Text("Hora (HH:MM)") },
-                                        modifier = Modifier.weight(0.9f),
-                                        singleLine = true
-                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1.3f)
+                                            .clickable { showDatePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = datePart,
+                                            onValueChange = {},
+                                            label = { Text("Fecha") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.CalendarToday,
+                                                    contentDescription = "Seleccionar fecha"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(0.9f)
+                                            .clickable { showTimePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = timePart,
+                                            onValueChange = {},
+                                            label = { Text("Hora") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Event,
+                                                    contentDescription = "Seleccionar hora"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
                                 }
 
                                 Spacer(modifier = Modifier.height(4.dp))

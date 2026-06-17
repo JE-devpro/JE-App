@@ -112,7 +112,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _prefNotifNovedades.value = sharedPrefs.getBoolean("pref_notif_novedades$suffix", sharedPrefs.getBoolean("pref_notif_novedades", true))
         _prefNotifNube.value = sharedPrefs.getBoolean("pref_notif_nube$suffix", sharedPrefs.getBoolean("pref_notif_nube", true))
         _prefNotifSistema.value = sharedPrefs.getBoolean("pref_notif_sistema$suffix", sharedPrefs.getBoolean("pref_notif_sistema", true))
-        _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", "system") ?: "system"
+        _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", "light") ?: "light"
     }
 
     fun updateCloudSyncUrl(newUrl: String) {
@@ -138,7 +138,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().putStringSet("sync_tombstones$suffix", current).apply()
     }
 
-    private val _prefTheme = MutableStateFlow("system")
+    private val _prefTheme = MutableStateFlow("light")
     val prefTheme = _prefTheme.asStateFlow()
 
     private val _prefNotifActividades = MutableStateFlow(true)
@@ -775,6 +775,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 addTombstone(key)
             }
             repository.deleteActivity(id)
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank() && checkIfAdmin()) {
+                try {
+                    val remainingAct = repository.allActivities.first()
+                    CloudSyncClient.uploadActivities(url, remainingAct)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of remaining activities failed: ${e.localizedMessage}")
+                }
+            }
             autoSync()
         }
     }
@@ -852,6 +861,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 repository.insertEnrollment(enrollment)
             }
+
+            val context = getApplication<android.app.Application>()
+            if (isActive) {
+                com.example.receiver.ReminderScheduler.scheduleReminder(context, activity, minutes)
+            } else {
+                com.example.receiver.ReminderScheduler.cancelReminder(context, activity)
+            }
+
             autoSync()
         }
     }
@@ -872,6 +889,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateActivity(activity: EcoActivity) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.updateActivity(activity)
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank() && checkIfAdmin()) {
+                try {
+                    val currentActs = repository.allActivities.first()
+                    CloudSyncClient.uploadActivities(url, currentActs)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of updated activities failed: ${e.localizedMessage}")
+                }
+            }
             autoSync()
         }
     }
@@ -969,6 +995,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateLocalArticle(article: EcoArticle) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertArticle(article)
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank() && checkIfAdmin()) {
+                try {
+                    val currentArticles = repository.allArticles.first()
+                    CloudSyncClient.uploadArticles(url, currentArticles)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of updated articles failed: ${e.localizedMessage}")
+                }
+            }
             autoSync()
         }
     }
@@ -985,6 +1020,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 photoUri = photoUri
             )
             repository.insertArticle(newArticle)
+
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank() && checkIfAdmin()) {
+                try {
+                    val currentArticles = repository.allArticles.first()
+                    CloudSyncClient.uploadArticles(url, currentArticles)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of newly published article failed: ${e.localizedMessage}")
+                }
+            }
 
             // Add points for contributing knowledge!
             val active = _loggedInMember.value
@@ -1023,6 +1068,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 addTombstone(key)
             }
             repository.deleteArticle(id)
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank() && checkIfAdmin()) {
+                try {
+                    val remainingArticles = repository.allArticles.first()
+                    CloudSyncClient.uploadArticles(url, remainingArticles)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of remaining articles failed: ${e.localizedMessage}")
+                }
+            }
             autoSync()
         }
     }
@@ -1260,33 +1314,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun smartMergeActivities(
         localActivities: List<EcoActivity>, 
         remoteActivities: List<EcoActivity>,
-        isFirstSync: Boolean
+        isFirstSync: Boolean,
+        isAdmin: Boolean
     ): List<EcoActivity> {
-        val merged = mutableListOf<EcoActivity>()
-        val localMap = localActivities.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
-        val remoteMap = remoteActivities.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
-        
-        val allKeys = (localMap.keys + remoteMap.keys).distinct()
         val tombstones = getTombstones()
+        val mergedMap = mutableMapOf<Int, EcoActivity>()
+        val mergedListNoId = mutableListOf<EcoActivity>()
 
-        for (key in allKeys) {
-            val tombstoneKey = "activity_$key"
-            if (tombstones.contains(tombstoneKey)) {
-                continue
-            }
+        // 1. Match by ID (for non-zero IDs)
+        val localWithId = localActivities.filter { it.id != 0 }.associateBy { it.id }
+        val remoteWithId = remoteActivities.filter { it.id != 0 }.associateBy { it.id }
+        val allIds = (localWithId.keys + remoteWithId.keys).distinct()
 
-            val localAct = localMap[key]
-            val remoteAct = remoteMap[key]
+        for (id in allIds) {
+            val localAct = localWithId[id]
+            val remoteAct = remoteWithId[id]
+
             if (localAct != null && remoteAct != null) {
-                // In a cooperative bidirectional sync, we allow local updates to propagate stably to the cloud.
                 val useLocal = !isFirstSync
                 
-                val finalMandatory = if (useLocal) {
-                    localAct.isMandatory
-                } else {
-                    remoteAct.isMandatory
+                // Tombstone check for either old or new key to support deletion propagation
+                val compositeKeyLocal = "${localAct.title.trim().lowercase()}_${localAct.date.trim()}"
+                val compositeKeyRemote = "${remoteAct.title.trim().lowercase()}_${remoteAct.date.trim()}"
+                if (tombstones.contains("activity_$compositeKeyLocal") || tombstones.contains("activity_$compositeKeyRemote")) {
+                    continue
                 }
-                
+
+                val finalMandatory = if (useLocal) localAct.isMandatory else remoteAct.isMandatory
                 val finalTitle = if (useLocal) localAct.title else remoteAct.title
                 val finalDesc = if (useLocal) localAct.description else remoteAct.description
                 val finalDate = if (useLocal) localAct.date else remoteAct.date
@@ -1295,37 +1349,73 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalCategory = if (useLocal) localAct.category else remoteAct.category
                 val finalOrganizer = if (useLocal) localAct.organizer else remoteAct.organizer
                 val finalEventType = if (useLocal) localAct.eventType else remoteAct.eventType
-
-                // For registration state, the local device is the authority on whether THIS user is registered in it.
+                
                 val finalRegistered = localAct.isUserRegistered
 
-                merged.add(
-                    localAct.copy(
-                        title = finalTitle,
-                        description = finalDesc,
-                        date = finalDate,
-                        location = finalLoc,
-                        country = finalCountry,
-                        category = finalCategory,
-                        organizer = finalOrganizer,
-                        eventType = finalEventType,
-                        isMandatory = finalMandatory,
-                        isUserRegistered = finalRegistered
-                    )
+                mergedMap[id] = localAct.copy(
+                    title = finalTitle,
+                    description = finalDesc,
+                    date = finalDate,
+                    location = finalLoc,
+                    country = finalCountry,
+                    category = finalCategory,
+                    organizer = finalOrganizer,
+                    eventType = finalEventType,
+                    isMandatory = finalMandatory,
+                    isUserRegistered = finalRegistered
                 )
             } else if (localAct != null) {
-                merged.add(localAct)
+                val compositeKey = "${localAct.title.trim().lowercase()}_${localAct.date.trim()}"
+                if (!tombstones.contains("activity_$compositeKey")) {
+                    if (isAdmin || !isFirstSync) {
+                        mergedMap[id] = localAct
+                    }
+                }
             } else {
-                remoteAct?.let { merged.add(it) }
+                remoteAct?.let {
+                    val compositeKey = "${it.title.trim().lowercase()}_${it.date.trim()}"
+                    if (!tombstones.contains("activity_$compositeKey")) {
+                        mergedMap[id] = it
+                    }
+                }
             }
         }
-        return merged
+
+        // 2. Match by composite key for items where ID == 0 (if any)
+        val localNoId = localActivities.filter { it.id == 0 }
+        val remoteNoId = remoteActivities.filter { it.id == 0 }
+        val localNoIdMap = localNoId.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
+        val remoteNoIdMap = remoteNoId.associateBy { "${it.title.trim().lowercase()}_${it.date.trim()}" }
+        val allNoIdKeys = (localNoIdMap.keys + remoteNoIdMap.keys).distinct()
+
+        for (key in allNoIdKeys) {
+            if (tombstones.contains("activity_$key")) {
+                continue
+            }
+            val localAct = localNoIdMap[key]
+            val remoteAct = remoteNoIdMap[key]
+
+            if (localAct != null && remoteAct != null) {
+                val useLocal = !isFirstSync
+                val finalAct = if (useLocal) localAct else remoteAct
+                mergedListNoId.add(finalAct)
+            } else if (localAct != null) {
+                if (isAdmin || !isFirstSync) {
+                    mergedListNoId.add(localAct)
+                }
+            } else {
+                remoteAct?.let { mergedListNoId.add(it) }
+            }
+        }
+
+        return mergedMap.values.toList() + mergedListNoId
     }
 
     private fun smartMergeArticles(
         localArticles: List<EcoArticle>, 
         remoteArticles: List<EcoArticle>,
-        isFirstSync: Boolean
+        isFirstSync: Boolean,
+        isAdmin: Boolean
     ): List<EcoArticle> {
         val merged = mutableListOf<EcoArticle>()
         val localMap = localArticles.associateBy { "${it.title.trim().lowercase()}_${it.publishDate.trim()}" }
@@ -1372,7 +1462,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             } else if (localArt != null) {
-                merged.add(localArt)
+                if (isAdmin) {
+                    merged.add(localArt)
+                }
             } else {
                 remoteArt?.let { merged.add(it) }
             }
@@ -1482,7 +1574,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             // 3. Bidirectional merge
             // Merging Activities with smart overwrite prevention
-            val mergedActivities = smartMergeActivities(localActivities, remoteActivities, isFirstSync)
+            val mergedActivities = smartMergeActivities(localActivities, remoteActivities, isFirstSync, isUserAdmin)
 
             // Merging Members securely to preserve Admin-assigned carnet images and key updates Bidirectionally
             val mergedMembers = smartMergeMembers(localMembers, remoteMembers, isFirstSync)
@@ -1494,25 +1586,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
                 }
             } else {
-                // Bidirectional sync: Allow removing a local enrollment to propagate safely to the cloud
-                val filteredRemoteEnrollments = remoteEnrollments.filter { remoteEnroll ->
-                    val isSelf = remoteEnroll.memberEmail.trim().lowercase() == userEmail.trim().lowercase()
-                    if (isSelf) {
-                        localEnrollments.any { 
-                            it.activityId == remoteEnroll.activityId && 
-                            it.memberEmail.trim().lowercase() == remoteEnroll.memberEmail.trim().lowercase() 
-                        }
-                    } else {
-                        true
-                    }
+                // Bidirectional sync with Authority Rules:
+                // 1. For the logged-in user (self), the local database is the authority (allows adding, deleting, and editing reminders locally).
+                // 2. For other users, the cloud database is the authority (inherits updates/deletions from others, prevents overwriting with stale local copies).
+                val selfEnrollments = localEnrollments.filter { 
+                    it.memberEmail.trim().lowercase() == userEmail.trim().lowercase() 
                 }
-                (localEnrollments + filteredRemoteEnrollments).distinctBy { 
+                val otherRemoteEnrollments = remoteEnrollments.filter { 
+                    it.memberEmail.trim().lowercase() != userEmail.trim().lowercase() 
+                }
+                
+                // If the logged-in user deleted their local enrollment, it is omitted from selfEnrollments, and thus omitted from the cloud.
+                // If it is present, it takes precedence over the cloud version of themselves.
+                (selfEnrollments + otherRemoteEnrollments).distinctBy { 
                     "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
                 }
             }
 
             // Merging Articles/Reports with smart overwrite prevention
-            val mergedArticles = smartMergeArticles(localArticles, remoteArticles, isFirstSync)
+            val mergedArticles = smartMergeArticles(localArticles, remoteArticles, isFirstSync, isUserAdmin)
 
             // Merging Notifications (separate local filtered vs. cloud persisted lists)
             val localMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true, isAdmin = isUserAdmin)
@@ -1521,7 +1613,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // 4. Upload merged data back to Cloud (Cooperative Bidirectional Synchronization)
             // To ensure all data created or altered locally is fully published and synchronized with the cloud backend,
             // we perform a complete, robust push of all tables bidirectionally for all roles.
-            CloudSyncClient.uploadActivities(url, mergedActivities)
+            if (isUserAdmin) {
+                CloudSyncClient.uploadActivities(url, mergedActivities)
+            }
             if (userEmail.isNotBlank()) {
                 // All users (including coordinator/admin) only sync and upload their own profile in background sync
                 val selfProfile = mergedMembers.find { it.email.trim().lowercase() == userEmail.trim().lowercase() }

@@ -1,5 +1,7 @@
 import java.net.URL
 import java.net.HttpURLConnection
+import java.io.FileOutputStream
+import java.io.File
 
 plugins {
   alias(libs.plugins.android.application)
@@ -131,3 +133,107 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
     jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
   }
 }
+
+// Generates a beautiful synthesized elegant notification chime WAV at configuration/sync time
+val rawDir = file("src/main/res/raw")
+if (!rawDir.exists()) {
+  rawDir.mkdirs()
+}
+val targetFile = file("src/main/res/raw/elegant_chime.wav")
+if (!targetFile.exists()) {
+  println("Generating elegant notification chime WAV...")
+  val sampleRate = 22050
+  val duration = 1.2
+  val numSamples = (sampleRate * duration).toInt()
+  val subChunk2Size = numSamples * 2
+  val chunkSize = 36 + subChunk2Size
+
+  FileOutputStream(targetFile).use { fos ->
+    // RIFF header
+    fos.write("RIFF".toByteArray(Charsets.US_ASCII))
+    // Chunk Size
+    fos.write(chunkSize and 0xFF)
+    fos.write((chunkSize shr 8) and 0xFF)
+    fos.write((chunkSize shr 16) and 0xFF)
+    fos.write((chunkSize shr 24) and 0xFF)
+    
+    fos.write("WAVE".toByteArray(Charsets.US_ASCII))
+    fos.write("fmt ".toByteArray(Charsets.US_ASCII))
+    
+    // Subchunk1Size (16)
+    fos.write(16)
+    fos.write(0)
+    fos.write(0)
+    fos.write(0)
+    
+    // AudioFormat (1)
+    fos.write(1)
+    fos.write(0)
+    
+    // NumChannels (1)
+    fos.write(1)
+    fos.write(0)
+    
+    // SampleRate (22050)
+    fos.write(sampleRate and 0xFF)
+    fos.write((sampleRate shr 8) and 0xFF)
+    fos.write((sampleRate shr 16) and 0xFF)
+    fos.write((sampleRate shr 24) and 0xFF)
+    
+    // ByteRate (44100)
+    val byteRate = sampleRate * 2
+    fos.write(byteRate and 0xFF)
+    fos.write((byteRate shr 8) and 0xFF)
+    fos.write((byteRate shr 16) and 0xFF)
+    fos.write((byteRate shr 24) and 0xFF)
+    
+    // BlockAlign (2)
+    fos.write(2)
+    fos.write(0)
+    
+    // BitsPerSample (16)
+    fos.write(16)
+    fos.write(0)
+    
+    fos.write("data".toByteArray(Charsets.US_ASCII))
+    
+    // Subchunk2Size
+    fos.write(subChunk2Size and 0xFF)
+    fos.write((subChunk2Size shr 8) and 0xFF)
+    fos.write((subChunk2Size shr 16) and 0xFF)
+    fos.write((subChunk2Size shr 24) and 0xFF)
+
+    // Mathematically generate a high-quality beautiful crystal chime chord
+    // A chord of G6-A6 crystal bell:
+    // Frequencies: 1568 Hz (G6), 1760 Hz (A6), 1975.5 Hz (B6) for a shimmering crystal chord.
+    // Exponential decay envelope: exp(-4.5 * t) for a pure clean chime ring.
+    val f1 = 1568.0
+    val f2 = 1760.0
+    val f3 = 1975.5
+    val f4 = 3136.0 // Subtly higher overtone G7
+
+    for (i in 0 until numSamples) {
+      val t = i.toDouble() / sampleRate.toDouble()
+      // Exponential decay envelope
+      val envelope = Math.exp(-4.5 * t)
+      
+      // Main crystal tones
+      val wave = Math.sin(2.0 * Math.PI * f1 * t) * 0.45 +
+                 Math.sin(2.0 * Math.PI * f2 * t) * 0.30 +
+                 Math.sin(2.0 * Math.PI * f3 * t) * 0.15 +
+                 Math.sin(2.0 * Math.PI * f4 * t) * 0.10
+      
+      val valueVal = (wave * envelope * 24000.0).toInt()
+      
+      // Clamp to short bounds just in case
+      val clampedValue = Math.max(-32768, Math.min(32767, valueVal)).toShort()
+      
+      fos.write(clampedValue.toInt() and 0xFF)
+      fos.write((clampedValue.toInt() shr 8) and 0xFF)
+    }
+  }
+  println("Successfully generated the elegant notification chime.")
+} else {
+  println("Elegant notification chime already exists.")
+}
+

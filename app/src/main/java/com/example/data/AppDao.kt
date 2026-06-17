@@ -83,6 +83,12 @@ interface AppDao {
     @Query("SELECT * FROM enrollments WHERE activityId = :activityId AND LOWER(TRIM(memberEmail)) = LOWER(TRIM(:memberEmail)) LIMIT 1")
     suspend fun getEnrollmentDirect(activityId: Int, memberEmail: String): EcoEnrollment?
 
+    @Query("SELECT * FROM activities WHERE id = :id LIMIT 1")
+    suspend fun getActivityByIdDirect(id: Int): EcoActivity?
+
+    @Query("SELECT * FROM enrollments WHERE reminderMinutes >= 0")
+    suspend fun getActiveReminderEnrollmentsDirect(): List<EcoEnrollment>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEnrollment(enrollment: EcoEnrollment)
 
