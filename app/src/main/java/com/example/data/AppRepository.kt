@@ -25,6 +25,7 @@ class AppRepository(private val appDao: AppDao) {
     suspend fun getEnrollmentDirect(activityId: Int, memberEmail: String): EcoEnrollment? = appDao.getEnrollmentDirect(activityId, memberEmail)
     suspend fun insertEnrollment(enrollment: EcoEnrollment) = appDao.insertEnrollment(enrollment)
     suspend fun deleteEnrollment(activityId: Int, memberEmail: String) = appDao.deleteEnrollment(activityId, memberEmail)
+    suspend fun deleteEnrollmentsByActivityId(activityId: Int) = appDao.deleteEnrollmentsByActivityId(activityId)
 
     suspend fun insertNotification(notification: EcoNotification) = appDao.insertNotification(notification)
     suspend fun deleteNotificationById(id: Int) = appDao.deleteNotificationById(id)

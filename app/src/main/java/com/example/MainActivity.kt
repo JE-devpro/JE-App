@@ -33,6 +33,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -314,6 +315,8 @@ fun MainScreen(viewModel: AppViewModel) {
     var selectedActivityForEdit by remember { mutableStateOf<EcoActivity?>(null) }
     var selectedArticleForDetail by remember { mutableStateOf<EcoArticle?>(null) }
     var selectedArticleForEdit by remember { mutableStateOf<EcoArticle?>(null) }
+    var activityForEnrollConfirm by remember { mutableStateOf<EcoActivity?>(null) }
+    var activityForUnenrollConfirm by remember { mutableStateOf<EcoActivity?>(null) }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -615,7 +618,13 @@ fun MainScreen(viewModel: AppViewModel) {
                             joinDate = currentMember.joinDate,
                             memberPhotoUrl = currentMember.photoUri,
                             onNavigateToCarnet = { currentTab = NavigationTab.CARNET },
-                            onToggleEnroll = { viewModel.toggleEnrollment(it, currentMember) },
+                            onToggleEnroll = { activity ->
+                                if (activity.isUserRegistered) {
+                                    activityForUnenrollConfirm = activity
+                                } else {
+                                    activityForEnrollConfirm = activity
+                                }
+                            },
                             onDeleteActivity = { viewModel.deleteActivity(it) },
                             onCardClick = { selectedActivityForDetail = it }
                         )
@@ -627,7 +636,13 @@ fun MainScreen(viewModel: AppViewModel) {
                             currentMember = currentMember,
                             viewModel = viewModel,
                             isCoordinadorMode = isCoordinadorMode,
-                            onToggleEnroll = { viewModel.toggleEnrollment(it, currentMember) },
+                            onToggleEnroll = { activity ->
+                                if (activity.isUserRegistered) {
+                                    activityForUnenrollConfirm = activity
+                                } else {
+                                    activityForEnrollConfirm = activity
+                                }
+                            },
                             onDeleteActivity = { viewModel.deleteActivity(it) },
                             onCardClick = { selectedActivityForDetail = it }
                         )
@@ -675,6 +690,7 @@ fun MainScreen(viewModel: AppViewModel) {
                 }
             }
 
+            val hapticFeedback = androidx.compose.ui.platform.LocalHapticFeedback.current
             // Floating bottom navigation bar overlay
             Box(
                 modifier = Modifier
@@ -703,7 +719,10 @@ fun MainScreen(viewModel: AppViewModel) {
                             if (tab != NavigationTab.ADMIN || isCoordinadorMode) {
                                 NavigationBarItem(
                                     selected = currentTab == tab,
-                                    onClick = { currentTab = tab },
+                                    onClick = { 
+                                        hapticFeedback.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                                        currentTab = tab 
+                                    },
                                     icon = {
                                         Icon(
                                             imageVector = if (currentTab == tab) tab.iconSelected else tab.iconUnselected,
@@ -755,6 +774,148 @@ fun MainScreen(viewModel: AppViewModel) {
                 viewModel.autoSync()
             }
         )
+    }
+
+    activityForEnrollConfirm?.let { act ->
+        Dialog(onDismissRequest = { activityForEnrollConfirm = null }) {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    Text(
+                        text = "Confirmar Inscripción",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Text(
+                        text = "¿Deseas inscribirte en la actividad \"${act.title}\"?",
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        lineHeight = 18.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { activityForEnrollConfirm = null }) {
+                            Text("Cancelar")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            shape = RoundedCornerShape(20.dp),
+                            onClick = {
+                                viewModel.toggleEnrollment(act, currentMember)
+                                activityForEnrollConfirm = null
+                            }
+                        ) {
+                            Text("Confirmar")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    activityForUnenrollConfirm?.let { act ->
+        Dialog(onDismissRequest = { activityForUnenrollConfirm = null }) {
+            Card(
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+
+                    Text(
+                        text = "Confirmar Cancelación",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Text(
+                        text = "¿Estás seguro de que deseas desinscribirte de \"${act.title}\"?",
+                        fontSize = 13.sp,
+                        textAlign = TextAlign.Center,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                        lineHeight = 18.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        TextButton(onClick = { activityForUnenrollConfirm = null }) {
+                            Text("Cancelar")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(
+                            shape = RoundedCornerShape(20.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.error
+                            ),
+                            onClick = {
+                                viewModel.toggleEnrollment(act, currentMember)
+                                activityForUnenrollConfirm = null
+                            }
+                        ) {
+                            Text(
+                                text = "Confirmar desinscripción",
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     selectedArticleForDetail?.let { article ->
@@ -889,8 +1050,8 @@ fun MainScreen(viewModel: AppViewModel) {
     if (showAddActivityDialog) {
         AddActivityDialog(
             onDismiss = { showAddActivityDialog = false },
-            onAdd = { title, desc, date, loc, country, cat, org, evType, isMandatory ->
-                viewModel.addActivity(title, desc, date, loc, country, cat, org, evType, isMandatory)
+            onAdd = { title, desc, date, endDate, loc, country, cat, org, evType, isMandatory ->
+                viewModel.addActivity(title, desc, date, endDate, loc, country, cat, org, evType, isMandatory)
                 showAddActivityDialog = false
             }
         )
@@ -954,6 +1115,13 @@ fun ActivitiesTab(
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
     val categories = listOf("Todos", "Educación", "Asamblea general", "Actividad", "Voluntariado")
     var activityToDelete by remember { mutableStateOf<EcoActivity?>(null) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(selectedCategoryFilter) {
+        try {
+            listState.scrollToItem(0)
+        } catch (_: Exception) {}
+    }
 
     if (activityToDelete != null) {
         AlertDialog(
@@ -999,6 +1167,7 @@ fun ActivitiesTab(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
         
         // Sleek "Quick Access Digital ID" Card representing the premium CSS container
         Box(
@@ -1015,7 +1184,10 @@ fun ActivitiesTab(
                         )
                     )
                 )
-                .clickable { onNavigateToCarnet() }
+                .clickable {
+                    haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    onNavigateToCarnet()
+                }
         ) {
             // Organic backdrop circle representing visual layers
             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -1163,7 +1335,10 @@ fun ActivitiesTab(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(bgColor)
-                        .clickable { selectedCategoryFilter = cat }
+                        .clickable { 
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            selectedCategoryFilter = cat 
+                        }
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
@@ -1218,6 +1393,7 @@ fun ActivitiesTab(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxSize(),
@@ -1228,9 +1404,16 @@ fun ActivitiesTab(
                     ActivityCard(
                         item = item,
                         isCoordinadorMode = isCoordinadorMode,
-                        onToggleEnroll = { onToggleEnroll(item) },
-                        onDelete = { activityToDelete = item },
-                        onClick = { onCardClick(item) }
+                        onToggleEnroll = { 
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            onToggleEnroll(item) 
+                        },
+                        onDelete = { 
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            activityToDelete = item 
+                        },
+                        onClick = { onCardClick(item) },
+                        modifier = Modifier.animateItem()
                     )
                 }
             }
@@ -1244,20 +1427,38 @@ fun ActivityCard(
     isCoordinadorMode: Boolean,
     onToggleEnroll: () -> Unit,
     onDelete: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val categoryStyle = remember(item.category) {
-        when (item.category.trim().lowercase()) {
-            "reforestación", "je-ambiente" -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), Icons.Filled.Eco)
-            "limpieza", "je-visual" -> Triple(Color(0xFFE0F2FE), Color(0xFF0284C7), Icons.Filled.WaterDrop)
-            "educación" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.School)
-            "conservación" -> Triple(Color(0xFFE5E7E2), Color(0xFF394931), Icons.Filled.Forest)
-            "je-ram" -> Triple(Color(0xFFECFDF5), Color(0xFF059669), Icons.Filled.Eco)
-            "je-mental" -> Triple(Color(0xFFF3E8FF), Color(0xFF7C3AED), Icons.Filled.Eco)
-            "je-podcast" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.Eco)
-            "je-360" -> Triple(Color(0xFFE0F2FE), Color(0xFF2563EB), Icons.Filled.Eco)
-            "je-vih" -> Triple(Color(0xFFFFE4E6), Color(0xFFE11D48), Icons.Filled.Eco)
-            else -> Triple(Color(0xFFEAECE9), Color(0xFF4C5E43), Icons.Filled.NaturePeople)
+    val isDark = MaterialTheme.colorScheme.background.red < 0.5f
+
+    val categoryStyle = remember(item.category, isDark) {
+        if (isDark) {
+            when (item.category.trim().lowercase()) {
+                "reforestación", "je-ambiente" -> Triple(Color(0xFF064E3B), Color(0xFF34D399), Icons.Filled.Eco)
+                "limpieza", "je-visual" -> Triple(Color(0xFF0C4A6E), Color(0xFF38BDF8), Icons.Filled.WaterDrop)
+                "educación" -> Triple(Color(0xFF78350F), Color(0xFFFBBF24), Icons.Filled.School)
+                "conservación" -> Triple(Color(0xFF2D3A29), Color(0xFFC2C9B6), Icons.Filled.Forest)
+                "je-ram" -> Triple(Color(0xFF022C22), Color(0xFF34D399), Icons.Filled.Eco)
+                "je-mental" -> Triple(Color(0xFF3B0764), Color(0xFFC084FC), Icons.Filled.Eco)
+                "je-podcast" -> Triple(Color(0xFF78350F), Color(0xFFFBBF24), Icons.Filled.Eco)
+                "je-360" -> Triple(Color(0xFF1E3A8A), Color(0xFF60A5FA), Icons.Filled.Eco)
+                "je-vih" -> Triple(Color(0xFF881337), Color(0xFFFDA4AF), Icons.Filled.Eco)
+                else -> Triple(Color(0xFF273523), Color(0xFFB4C2AF), Icons.Filled.NaturePeople)
+            }
+        } else {
+            when (item.category.trim().lowercase()) {
+                "reforestación", "je-ambiente" -> Triple(Color(0xFFD1FAE5), Color(0xFF047857), Icons.Filled.Eco)
+                "limpieza", "je-visual" -> Triple(Color(0xFFE0F2FE), Color(0xFF0284C7), Icons.Filled.WaterDrop)
+                "educación" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.School)
+                "conservación" -> Triple(Color(0xFFE5E7E2), Color(0xFF394931), Icons.Filled.Forest)
+                "je-ram" -> Triple(Color(0xFFECFDF5), Color(0xFF059669), Icons.Filled.Eco)
+                "je-mental" -> Triple(Color(0xFFF3E8FF), Color(0xFF7C3AED), Icons.Filled.Eco)
+                "je-podcast" -> Triple(Color(0xFFFEF3C7), Color(0xFFD97706), Icons.Filled.Eco)
+                "je-360" -> Triple(Color(0xFFE0F2FE), Color(0xFF2563EB), Icons.Filled.Eco)
+                "je-vih" -> Triple(Color(0xFFFFE4E6), Color(0xFFE11D48), Icons.Filled.Eco)
+                else -> Triple(Color(0xFFEAECE9), Color(0xFF4C5E43), Icons.Filled.NaturePeople)
+            }
         }
     }
 
@@ -1271,20 +1472,36 @@ fun ActivityCard(
         }
     }
 
-    val typeColor = remember(item.eventType) {
-        when (item.eventType.lowercase()) {
-            "voluntariado" -> Color(0xFF047857)
-            "educación" -> Color(0xFFD97706)
-            "asamblea general" -> Color(0xFF7C3AED)
-            "actividad" -> Color(0xFF0284C7)
-            "talleres" -> Color(0xFFD97706)
-            "charlas" -> Color(0xFF0284C7)
-            else -> Color(0xFF6B7280)
+    val typeColor = remember(item.eventType, isDark) {
+        if (isDark) {
+            when (item.eventType.lowercase()) {
+                "voluntariado" -> Color(0xFF34D399)
+                "educación" -> Color(0xFFFBBF24)
+                "asamblea general" -> Color(0xFFC084FC)
+                "actividad" -> Color(0xFF60A5FA)
+                "talleres" -> Color(0xFFFBBF24)
+                "charlas" -> Color(0xFF60A5FA)
+                else -> Color(0xFF9CA3AF)
+            }
+        } else {
+            when (item.eventType.lowercase()) {
+                "voluntariado" -> Color(0xFF047857)
+                "educación" -> Color(0xFFD97706)
+                "asamblea general" -> Color(0xFF7C3AED)
+                "actividad" -> Color(0xFF0284C7)
+                "talleres" -> Color(0xFFD97706)
+                "charlas" -> Color(0xFF0284C7)
+                else -> Color(0xFF6B7280)
+            }
         }
     }
 
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = modifier.fillMaxWidth().clickable { 
+            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            onClick() 
+        },
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surface
@@ -1353,14 +1570,16 @@ fun ActivityCard(
                         }
 
                         if (item.isMandatory) {
+                            val mandatoryBg = if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
+                            val mandatoryFg = if (isDark) Color(0xFFFCA5A5) else Color(0xFF991B1B)
                             Box(
                                 modifier = Modifier
-                                    .background(Color(0xFFFEE2E2), shape = RoundedCornerShape(4.dp))
+                                    .background(mandatoryBg, shape = RoundedCornerShape(4.dp))
                                     .padding(horizontal = 4.dp, vertical = 2.dp)
                             ) {
                                 Text(
                                     text = "OBLIGATORIA",
-                                    color = Color(0xFF991B1B),
+                                    color = mandatoryFg,
                                     fontSize = 8.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     maxLines = 1,
@@ -1478,13 +1697,15 @@ fun ActivityCard(
 @Composable
 fun AddActivityDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String, String, String, String, String, String, String, Boolean) -> Unit
+    onAdd: (String, String, String, String, String, String, String, String, String, Boolean) -> Unit
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
     var desc by remember { mutableStateOf("") }
     var datePart by remember { mutableStateOf("2026-06-05") }
     var timePart by remember { mutableStateOf("10:00") }
+    var endDatePart by remember { mutableStateOf("2026-06-05") }
+    var endTimePart by remember { mutableStateOf("12:00") }
 
     val showDatePicker = {
         val calendar = java.util.Calendar.getInstance()
@@ -1505,7 +1726,12 @@ fun AddActivityDialog(
             { _, year, month, dayOfMonth ->
                 val formattedMonth = String.format("%02d", month + 1)
                 val formattedDay = String.format("%02d", dayOfMonth)
+                val oldDate = datePart
                 datePart = "$year-$formattedMonth-$formattedDay"
+                // Keep end date aligned with start date initially unless user customizes it
+                if (endDatePart == oldDate) {
+                    endDatePart = datePart
+                }
             },
             calendar.get(java.util.Calendar.YEAR),
             calendar.get(java.util.Calendar.MONTH),
@@ -1521,6 +1747,48 @@ fun AddActivityDialog(
             context,
             { _, selectedHour, selectedMinute ->
                 timePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
+
+    val showEndDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (endDatePart.isNotBlank()) {
+            try {
+                val parts = endDatePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                endDatePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showEndTimePicker = {
+        val hourMinute = endTimePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 12
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                endTimePart = String.format("%02d:%02d", selectedHour, selectedMinute)
             },
             hour,
             minute,
@@ -1609,10 +1877,10 @@ fun AddActivityDialog(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Card 1: Información Básica
+                    // Card 1: Información Básica (Creación Única)
                     item {
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth() /* create_card_1 */,
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
                             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                         ) {
@@ -1623,7 +1891,7 @@ fun AddActivityDialog(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "1. Información Básica",
+                                    text = "1. Información Básica (Nuevo)",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
@@ -1631,7 +1899,7 @@ fun AddActivityDialog(
                                 
                                 OutlinedTextField(
                                     value = title,
-                                    onValueChange = { title = it },
+                                    onValueChange = { title = it /* add_title */ },
                                     label = { Text("Título de la actividad") },
                                     modifier = Modifier.fillMaxWidth(),
                                     singleLine = true
@@ -1639,7 +1907,7 @@ fun AddActivityDialog(
 
                                 OutlinedTextField(
                                     value = desc,
-                                    onValueChange = { desc = it },
+                                    onValueChange = { desc = it /* add_desc */ },
                                     label = { Text("Descripción / Convocatoria") },
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1649,7 +1917,7 @@ fun AddActivityDialog(
 
                                 OutlinedTextField(
                                     value = org,
-                                    onValueChange = { org = it },
+                                    onValueChange = { org = it /* add_org */ },
                                     label = { Text("Organizador (Colectivo / Organización)") },
                                     placeholder = { Text("Ej. Voluntariado Juvenil") },
                                     modifier = Modifier.fillMaxWidth(),
@@ -1677,14 +1945,14 @@ fun AddActivityDialog(
                                     }
                                     Switch(
                                         checked = isMandatory,
-                                        onCheckedChange = { isMandatory = it }
+                                        onCheckedChange = { isMandatory = it /* add_is_mandatory */ }
                                     )
                                 }
                             }
                         }
                     }
 
-                    // Card 2: Fecha, Modalidad y Ubicación
+                    // Card 2: Fecha, Modalidad y Ubicación (Creación)
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -1704,6 +1972,12 @@ fun AddActivityDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
 
+                                Text(
+                                    text = "Fecha y Hora de Inicio",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1716,13 +1990,13 @@ fun AddActivityDialog(
                                         OutlinedTextField(
                                             value = datePart,
                                             onValueChange = {},
-                                            label = { Text("Fecha") },
+                                            label = { Text("Fecha Inicio") },
                                             readOnly = true,
                                             enabled = false,
                                             trailingIcon = {
                                                 Icon(
                                                     imageVector = Icons.Filled.CalendarToday,
-                                                    contentDescription = "Seleccionar fecha"
+                                                    contentDescription = "Seleccionar fecha inicio"
                                                 )
                                             },
                                             colors = OutlinedTextFieldDefaults.colors(
@@ -1744,13 +2018,80 @@ fun AddActivityDialog(
                                         OutlinedTextField(
                                             value = timePart,
                                             onValueChange = {},
-                                            label = { Text("Hora") },
+                                            label = { Text("Hora Inicio") },
                                             readOnly = true,
                                             enabled = false,
                                             trailingIcon = {
                                                 Icon(
                                                     imageVector = Icons.Filled.Event,
-                                                    contentDescription = "Seleccionar hora"
+                                                    contentDescription = "Seleccionar hora inicio"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "Fecha y Hora de Fin",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1.3f)
+                                            .clickable { showEndDatePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = endDatePart,
+                                            onValueChange = {},
+                                            label = { Text("Fecha Fin") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.CalendarToday,
+                                                    contentDescription = "Seleccionar fecha fin"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(0.9f)
+                                            .clickable { showEndTimePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = endTimePart,
+                                            onValueChange = {},
+                                            label = { Text("Hora Fin") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Event,
+                                                    contentDescription = "Seleccionar hora fin"
                                                 )
                                             },
                                             colors = OutlinedTextFieldDefaults.colors(
@@ -1987,10 +2328,12 @@ fun AddActivityDialog(
                                     loc.ifBlank { "Presencial" }
                                 }
                                 val rawEcuadorDateStr = "${datePart.trim()} ${timePart.trim()}"
+                                val rawEcuadorEndDateStr = "${endDatePart.trim()} ${endTimePart.trim()}"
                                 onAdd(
                                     title,
                                     desc,
                                     rawEcuadorDateStr,
+                                    rawEcuadorEndDateStr,
                                     finalLoc,
                                     country,
                                     cat,
@@ -2715,6 +3058,8 @@ fun CarnetTab(
             }
         }
 
+
+
         // Inline Profile Edit Collapsible Panel
         item {
             AnimatedVisibility(visible = isEditing) {
@@ -3021,9 +3366,17 @@ fun FeedTab(
     onArticleClick: (EcoArticle) -> Unit
 ) {
     val searchQuery = ""
+    val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     var selectedCategoryFilter by remember { mutableStateOf("Todos") }
     val categories = listOf("Todos", "JE-RAM", "JE-Mental", "JE-Ambiente", "JE-Podcast", "JE-Visual", "JE-360", "JE-VIH", "Conservación", "Comunidad")
     var articleToDelete by remember { mutableStateOf<EcoArticle?>(null) }
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(selectedCategoryFilter) {
+        try {
+            listState.scrollToItem(0)
+        } catch (_: Exception) {}
+    }
 
     if (articleToDelete != null) {
         AlertDialog(
@@ -3175,7 +3528,10 @@ fun FeedTab(
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
                         .background(bgColor)
-                        .clickable { selectedCategoryFilter = cat }
+                        .clickable { 
+                            haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                            selectedCategoryFilter = cat 
+                        }
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
@@ -3191,17 +3547,10 @@ fun FeedTab(
         Spacer(modifier = Modifier.height(4.dp))
 
         // Column Listing
-        val filteredArticles = articles.filter {
-            val matchesSearch = it.title.contains(searchQuery, ignoreCase = true) ||
-                    it.content.contains(searchQuery, ignoreCase = true) ||
-                    it.category.contains(searchQuery, ignoreCase = true) ||
-                    it.region.contains(searchQuery, ignoreCase = true)
-            val matchesCategory = if (selectedCategoryFilter == "Todos") {
-                true
-            } else {
-                it.category.contains(selectedCategoryFilter, ignoreCase = true)
-            }
-            matchesSearch && matchesCategory
+        val filteredArticles = if (selectedCategoryFilter == "Todos") {
+            articles
+        } else {
+            articles.filter { it.category.contains(selectedCategoryFilter, ignoreCase = true) }
         }
 
         if (filteredArticles.isEmpty()) {
@@ -3234,6 +3583,7 @@ fun FeedTab(
             }
         } else {
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxSize(),
@@ -4216,6 +4566,47 @@ fun BugReportDialog(
 // INTERACTIVE CALENDAR TAB COMPONENTS & HELPERS
 // ==========================================
 
+fun isActivityOnThisDay(activity: EcoActivity, day: Int, month: Int, year: Int): Boolean {
+    val startEpoch = com.example.util.TimezoneHelper.parseEcuadorDateTime(activity.date) ?: return false
+    
+    if (activity.endDate.isNullOrBlank()) {
+        return extractDayFromDateStr(activity.date) == day &&
+               extractMonthFromDateStr(activity.date) == month &&
+               extractYearFromDateStr(activity.date) == year
+    }
+    
+    val endEpoch = com.example.util.TimezoneHelper.parseEcuadorDateTime(activity.endDate) ?: startEpoch
+    
+    val targetCalendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("America/Guayaquil")).apply {
+        set(java.util.Calendar.YEAR, year)
+        set(java.util.Calendar.MONTH, month)
+        set(java.util.Calendar.DAY_OF_MONTH, day)
+        set(java.util.Calendar.HOUR_OF_DAY, 12)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val targetTime = targetCalendar.timeInMillis
+    
+    val startCalendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("America/Guayaquil")).apply {
+        timeInMillis = startEpoch
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    
+    val endCalendar = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("America/Guayaquil")).apply {
+        timeInMillis = endEpoch
+        set(java.util.Calendar.HOUR_OF_DAY, 23)
+        set(java.util.Calendar.MINUTE, 59)
+        set(java.util.Calendar.SECOND, 59)
+        set(java.util.Calendar.MILLISECOND, 999)
+    }
+    
+    return targetTime in startCalendar.timeInMillis..endCalendar.timeInMillis
+}
+
 fun extractDayFromDateStr(dateStr: String): Int? {
     return try {
         val trimmed = dateStr.trim()
@@ -4844,9 +5235,7 @@ fun CalendarTab(
                                             if (dayNum in 1..targetDaysInMonth) {
                                                 // Calc if this day has any activities matching the filter
                                                 val activitiesOnThisDay = filteredActivities.filter { activity ->
-                                                    extractDayFromDateStr(activity.date) == dayNum &&
-                                                    extractMonthFromDateStr(activity.date) == targetMonth &&
-                                                    extractYearFromDateStr(activity.date) == targetYear
+                                                    isActivityOnThisDay(activity, dayNum, targetMonth, targetYear)
                                                 }
                                                 val hasActivities = activitiesOnThisDay.isNotEmpty()
                                                 val isCurrentSelected = selectedDay == dayNum && currentMonth == targetMonth && currentYear == targetYear
@@ -4971,9 +5360,7 @@ fun CalendarTab(
 
         // Find activities for selected day, month and year
         val dayFilteredActivities = filteredActivities.filter { activity ->
-            extractDayFromDateStr(activity.date) == selectedDay &&
-            extractMonthFromDateStr(activity.date) == currentMonth &&
-            extractYearFromDateStr(activity.date) == currentYear
+            isActivityOnThisDay(activity, selectedDay, currentMonth, currentYear)
         }
 
         if (dayFilteredActivities.isEmpty()) {
@@ -5044,7 +5431,13 @@ fun CalendarTab(
                                     calendar.timeInMillis
                                 }
                                 putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, beginTime)
-                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, beginTime + 2 * 60 * 60 * 1000)
+                                
+                                val endTime = if (!event.endDate.isNullOrBlank()) {
+                                    com.example.util.TimezoneHelper.parseEcuadorDateTime(event.endDate) ?: (beginTime + 2 * 60 * 60 * 1000)
+                                } else {
+                                    beginTime + 2 * 60 * 60 * 1000
+                                }
+                                putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endTime)
                             }
                             context.startActivity(calendarIntent)
                         } catch (e: Exception) {
@@ -5311,11 +5704,15 @@ fun LeafLogo(modifier: Modifier = Modifier, color: Color? = null) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LoginScreen(viewModel: AppViewModel) {
-    var email by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    val savedEmail = remember { viewModel.getSavedEmail() }
+    val savedPass = remember { viewModel.getSavedPassword() }
+    val savedRemember = remember { viewModel.getSavedRememberMe() }
+
+    var email by remember { mutableStateOf(savedEmail) }
+    var password by remember { mutableStateOf(savedPass) }
     var loginError by remember { mutableStateOf(false) }
     var showForgotDialog by remember { mutableStateOf(false) }
-    var rememberMe by remember { mutableStateOf(false) }
+    var rememberMe by remember { mutableStateOf(savedRemember) }
     val context = LocalContext.current
 
     val loginUiState by viewModel.loginUiState.collectAsStateWithLifecycle()
@@ -5632,7 +6029,7 @@ fun LoginScreen(viewModel: AppViewModel) {
             Button(
                 onClick = {
                     if (email.isNotBlank() && password.isNotBlank()) {
-                        viewModel.login(email, password) { success ->
+                        viewModel.login(email, password, rememberMe) { success ->
                             if (!success) {
                                 loginError = true
                             }
@@ -9513,12 +9910,23 @@ fun ActivityDetailDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val badgeColor = when (activity.category.lowercase()) {
-                        "reforestación" -> Color(0xFFD1FAE5) to Color(0xFF047857)
-                        "limpieza" -> Color(0xFFE0F2FE) to Color(0xFF0284C7)
-                        "educación" -> Color(0xFFFEF3C7) to Color(0xFFD97706)
-                        "conservación" -> Color(0xFFE5E7E2) to Color(0xFF394931)
-                        else -> Color(0xFFEAECE9) to Color(0xFF4C5E43)
+                    val isDark = MaterialTheme.colorScheme.background.red < 0.5f
+                    val badgeColor = if (isDark) {
+                        when (activity.category.trim().lowercase()) {
+                            "reforestación" -> Color(0xFF064E3B) to Color(0xFF34D399)
+                            "limpieza" -> Color(0xFF0C4A6E) to Color(0xFF38BDF8)
+                            "educación" -> Color(0xFF78350F) to Color(0xFFFBBF24)
+                            "conservación" -> Color(0xFF2D3A29) to Color(0xFFC2C9B6)
+                            else -> Color(0xFF273523) to Color(0xFFB4C2AF)
+                        }
+                    } else {
+                        when (activity.category.trim().lowercase()) {
+                            "reforestación" -> Color(0xFFD1FAE5) to Color(0xFF047857)
+                            "limpieza" -> Color(0xFFE0F2FE) to Color(0xFF0284C7)
+                            "educación" -> Color(0xFFFEF3C7) to Color(0xFFD97706)
+                            "conservación" -> Color(0xFFE5E7E2) to Color(0xFF394931)
+                            else -> Color(0xFFEAECE9) to Color(0xFF4C5E43)
+                        }
                     }
                     Box(
                         modifier = Modifier
@@ -9534,14 +9942,16 @@ fun ActivityDetailDialog(
                         )
                     }
                     if (activity.isMandatory) {
+                        val mandatoryBg = if (isDark) Color(0xFF7F1D1D) else Color(0xFFFEE2E2)
+                        val mandatoryFg = if (isDark) Color(0xFFFCA5A5) else Color(0xFF991B1B)
                         Box(
                             modifier = Modifier
-                                .background(Color(0xFFFEE2E2), shape = RoundedCornerShape(4.dp))
+                                .background(mandatoryBg, shape = RoundedCornerShape(4.dp))
                                 .padding(horizontal = 6.dp, vertical = 3.dp)
                         ) {
                             Text(
                                 text = "OBLIGATORIA",
-                                color = Color(0xFF991B1B),
+                                color = mandatoryFg,
                                 fontSize = 8.sp,
                                 fontWeight = FontWeight.ExtraBold
                             )
@@ -9901,6 +10311,12 @@ fun ActivityEditDialog(
     var datePart by remember { mutableStateOf(initialDatePart) }
     var timePart by remember { mutableStateOf(initialTimePart) }
 
+    val initialEndDateVal = if (activity.endDate.isNullOrBlank()) activity.date else activity.endDate
+    val initialEndDatePart = initialEndDateVal.substringBefore(" ").trim()
+    val initialEndTimePart = if (initialEndDateVal.contains(" ")) initialEndDateVal.substringAfter(" ").trim() else "12:00"
+    var endDatePart by remember { mutableStateOf(initialEndDatePart) }
+    var endTimePart by remember { mutableStateOf(initialEndTimePart) }
+
     val showDatePicker = {
         val calendar = java.util.Calendar.getInstance()
         if (datePart.isNotBlank()) {
@@ -9920,7 +10336,11 @@ fun ActivityEditDialog(
             { _, year, month, dayOfMonth ->
                 val formattedMonth = String.format("%02d", month + 1)
                 val formattedDay = String.format("%02d", dayOfMonth)
+                val oldDate = datePart
                 datePart = "$year-$formattedMonth-$formattedDay"
+                if (endDatePart == oldDate) {
+                    endDatePart = datePart
+                }
             },
             calendar.get(java.util.Calendar.YEAR),
             calendar.get(java.util.Calendar.MONTH),
@@ -9936,6 +10356,48 @@ fun ActivityEditDialog(
             context,
             { _, selectedHour, selectedMinute ->
                 timePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
+
+    val showEndDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (endDatePart.isNotBlank()) {
+            try {
+                val parts = endDatePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                endDatePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showEndTimePicker = {
+        val hourMinute = endTimePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 12
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                endTimePart = String.format("%02d:%02d", selectedHour, selectedMinute)
             },
             hour,
             minute,
@@ -10019,7 +10481,7 @@ fun ActivityEditDialog(
                         .padding(horizontal = 16.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = onDismissRequest) {
+                    IconButton(onClick = onDismissRequest) { // edit close button
                         Icon(
                             imageVector = Icons.Default.Close,
                             contentDescription = "Cerrar",
@@ -10050,10 +10512,10 @@ fun ActivityEditDialog(
                         .padding(horizontal = 16.dp, vertical = 10.dp),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    // Card 1: Información Básica
+                    // Card 1: Información Básica (Edición Única)
                     item {
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth() /* edit_card_1 */,
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
                             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
                         ) {
@@ -10064,7 +10526,7 @@ fun ActivityEditDialog(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "1. Información Básica",
+                                    text = "1. Información Básica (Edición)",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
@@ -10125,7 +10587,7 @@ fun ActivityEditDialog(
                         }
                     }
 
-                    // Card 2: Fecha, Modalidad y Ubicación
+                    // Card 2: Fecha, Modalidad y Ubicación (Edición)
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
@@ -10145,6 +10607,12 @@ fun ActivityEditDialog(
                                     color = MaterialTheme.colorScheme.primary
                                 )
 
+                                Text(
+                                    text = "Fecha y Hora de Inicio",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -10157,13 +10625,13 @@ fun ActivityEditDialog(
                                         OutlinedTextField(
                                             value = datePart,
                                             onValueChange = {},
-                                            label = { Text("Fecha") },
+                                            label = { Text("Fecha Inicio") },
                                             readOnly = true,
                                             enabled = false,
                                             trailingIcon = {
                                                 Icon(
                                                     imageVector = Icons.Filled.CalendarToday,
-                                                    contentDescription = "Seleccionar fecha"
+                                                    contentDescription = "Seleccionar fecha inicio"
                                                 )
                                             },
                                             colors = OutlinedTextFieldDefaults.colors(
@@ -10185,13 +10653,80 @@ fun ActivityEditDialog(
                                         OutlinedTextField(
                                             value = timePart,
                                             onValueChange = {},
-                                            label = { Text("Hora") },
+                                            label = { Text("Hora Inicio") },
                                             readOnly = true,
                                             enabled = false,
                                             trailingIcon = {
                                                 Icon(
                                                     imageVector = Icons.Filled.Event,
-                                                    contentDescription = "Seleccionar hora"
+                                                    contentDescription = "Seleccionar hora inicio"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "Fecha y Hora de Fin",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1.3f)
+                                            .clickable { showEndDatePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = endDatePart,
+                                            onValueChange = {},
+                                            label = { Text("Fecha Fin") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.CalendarToday,
+                                                    contentDescription = "Seleccionar fecha fin"
+                                                )
+                                            },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                            ),
+                                            modifier = Modifier.fillMaxWidth(),
+                                            singleLine = true
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(0.9f)
+                                            .clickable { showEndTimePicker() }
+                                    ) {
+                                        OutlinedTextField(
+                                            value = endTimePart,
+                                            onValueChange = {},
+                                            label = { Text("Hora Fin") },
+                                            readOnly = true,
+                                            enabled = false,
+                                            trailingIcon = {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Event,
+                                                    contentDescription = "Seleccionar hora fin"
                                                 )
                                             },
                                             colors = OutlinedTextFieldDefaults.colors(
@@ -10431,6 +10966,7 @@ fun ActivityEditDialog(
                                     title = title,
                                     description = desc,
                                     date = "${datePart.trim()} ${timePart.trim()}",
+                                    endDate = "${endDatePart.trim()} ${endTimePart.trim()}",
                                     location = finalLoc,
                                     country = country,
                                     category = cat,

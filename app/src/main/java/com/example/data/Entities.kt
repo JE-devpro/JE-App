@@ -10,7 +10,8 @@ data class EcoActivity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
     val description: String,
-    val date: String,
+    val date: String, // Represents start date and time
+    val endDate: String = "", // Represents end date and time
     val location: String,
     val country: String,
     val category: String,

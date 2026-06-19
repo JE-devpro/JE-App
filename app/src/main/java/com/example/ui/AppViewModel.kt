@@ -138,6 +138,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().putStringSet("sync_tombstones$suffix", current).apply()
     }
 
+    private fun removeTombstone(key: String, email: String? = _loggedInMember.value?.email) {
+        val current = getTombstones(email)
+        if (current.remove(key)) {
+            val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
+            sharedPrefs.edit().putStringSet("sync_tombstones$suffix", current).apply()
+        }
+    }
+
     private val _prefTheme = MutableStateFlow("light")
     val prefTheme = _prefTheme.asStateFlow()
 
@@ -359,10 +367,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 loadUserPreferences(member?.email)
             }
         }
+
+        val rem = sharedPrefs.getBoolean("session_remember_me", false)
+        val sMail = sharedPrefs.getString("session_saved_email", null)
+        val sPass = sharedPrefs.getString("session_saved_password", null)
+        if (rem && !sMail.isNullOrBlank() && !sPass.isNullOrBlank()) {
+            viewModelScope.launch {
+                login(sMail, sPass, true) { success ->
+                    Log.d("AppViewModel", "Auto-login on app launch success: $success")
+                }
+            }
+        }
+    }
+
+    fun getSavedRememberMe(): Boolean {
+        return sharedPrefs.getBoolean("session_remember_me", false)
+    }
+
+    fun getSavedEmail(): String {
+        return sharedPrefs.getString("session_saved_email", "") ?: ""
+    }
+
+    fun getSavedPassword(): String {
+        return sharedPrefs.getString("session_saved_password", "") ?: ""
     }
 
     // Login logic
-    fun login(email: String, password: String, onResult: (Boolean) -> Unit) {
+    fun login(email: String, password: String, rememberMe: Boolean = false, onResult: (Boolean) -> Unit) {
         if (email.isBlank() || password.isBlank()) {
             _loginUiState.value = LoginUiState.Error("Por favor complete todos los campos.")
             onResult(false)
@@ -383,7 +414,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (authSignInTask.isSuccessful) {
                             Log.d("AppViewModel", "Firebase Auth authentication successful for $trimmedEmail")
                             // Continue standard database login and syncing
-                            proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                            proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
                         } else {
                             // SignIn failed, maybe user is registered locally/cloud database but not yet in FirebaseAuth!
                             // Let's check local/cloud databases.
@@ -412,11 +443,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                                     Log.d("AppViewModel", "Auto-migrated member to Firebase Auth: $trimmedEmail")
                                                     com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(trimmedEmail, password)
                                                 }
-                                                proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                                                proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
                                             }
                                     } catch (e: Exception) {
                                         Log.e("AppViewModel", "Failed to createUserWithEmailAndPassword safely", e)
-                                        proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                                        proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
                                     }
                                 } else {
                                     viewModelScope.launch(Dispatchers.Main) {
@@ -437,19 +468,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     .addOnFailureListener { e ->
                         Log.w("AppViewModel", "Firebase Auth signIn failed with exception", e)
-                        proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                        proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
                     }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "FirebaseAuth signInWithEmailAndPassword exception", e)
-                proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+                proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
             }
         } else {
             // Firebase Auth not initialized or not available, fallback seamlessly
-            proceedLocalAndCloudLogin(trimmedEmail, password, onResult)
+            proceedLocalAndCloudLogin(trimmedEmail, password, rememberMe, onResult)
         }
     }
 
-    private fun proceedLocalAndCloudLogin(email: String, password: String, onResult: (Boolean) -> Unit) {
+    private fun proceedLocalAndCloudLogin(email: String, password: String, rememberMe: Boolean, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             val url = _cloudSyncUrl.value
             var cloudFetchSuccess = true
@@ -491,6 +522,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // Back up credential securely in Firebase RTDB
                 com.example.data.api.FirebaseHelper.storeMemberPasswordInDb(email.trim().lowercase(), password)
 
+                // Save or clear Remember Me session preferences
+                if (rememberMe) {
+                    sharedPrefs.edit().apply {
+                        putBoolean("session_remember_me", true)
+                        putString("session_saved_email", email.trim().lowercase())
+                        putString("session_saved_password", password)
+                    }.apply()
+                } else {
+                    sharedPrefs.edit().apply {
+                        putBoolean("session_remember_me", false)
+                        putString("session_saved_email", null)
+                        putString("session_saved_password", null)
+                    }.apply()
+                }
+
                 syncWithCloud { success, message ->
                     Log.d("AppViewModel", "Immediate login sync completed. Success: $success, Message: $message")
                 }
@@ -516,6 +562,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _loggedInMember.value = null
         _isOverrideCoordinator.value = false
         _adminMembersList.value = emptyList()
+        // Clear saved session strictly on explicit logout
+        sharedPrefs.edit().apply {
+            putBoolean("session_remember_me", false)
+            putString("session_saved_email", null)
+            putString("session_saved_password", null)
+        }.apply()
     }
 
     // Register a member account (Coordinator console action only)
@@ -730,6 +782,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         title: String,
         description: String,
         date: String,
+        endDate: String = "",
         location: String,
         country: String,
         category: String,
@@ -742,6 +795,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 title = title,
                 description = description,
                 date = date,
+                endDate = endDate,
                 location = location,
                 country = country,
                 category = category,
@@ -750,6 +804,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isMandatory = isMandatory
             )
             repository.insertActivity(activity)
+            removeTombstone("activity_${title.trim().lowercase()}_${date.trim()}")
 
             // Alert notification that activity was programmed
             if (_prefNotifActividades.value) {
@@ -775,13 +830,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 addTombstone(key)
             }
             repository.deleteActivity(id)
+            repository.deleteEnrollmentsByActivityId(id)
             val url = _cloudSyncUrl.value
             if (url.isNotBlank() && checkIfAdmin()) {
                 try {
                     val remainingAct = repository.allActivities.first()
                     CloudSyncClient.uploadActivities(url, remainingAct)
+                    val remainingEnrollments = repository.allEnrollments.first()
+                    CloudSyncClient.uploadEnrollments(url, remainingEnrollments)
                 } catch (e: Exception) {
-                    Log.e("AppViewModel", "Immediate cloud upload of remaining activities failed: ${e.localizedMessage}")
+                    Log.e("AppViewModel", "Immediate cloud upload of remaining activities and enrollments failed: ${e.localizedMessage}")
                 }
             }
             autoSync()
@@ -995,6 +1053,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun updateLocalArticle(article: EcoArticle) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.insertArticle(article)
+            removeTombstone("article_${article.title.trim().lowercase()}_${article.publishDate.trim()}")
             val url = _cloudSyncUrl.value
             if (url.isNotBlank() && checkIfAdmin()) {
                 try {
@@ -1020,6 +1079,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 photoUri = photoUri
             )
             repository.insertArticle(newArticle)
+            removeTombstone("article_${newArticle.title.trim().lowercase()}_${newArticle.publishDate.trim()}")
 
             val url = _cloudSyncUrl.value
             if (url.isNotBlank() && checkIfAdmin()) {
@@ -1344,6 +1404,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalTitle = if (useLocal) localAct.title else remoteAct.title
                 val finalDesc = if (useLocal) localAct.description else remoteAct.description
                 val finalDate = if (useLocal) localAct.date else remoteAct.date
+                val finalEndDate = if (useLocal) localAct.endDate else remoteAct.endDate
                 val finalLoc = if (useLocal) localAct.location else remoteAct.location
                 val finalCountry = if (useLocal) localAct.country else remoteAct.country
                 val finalCategory = if (useLocal) localAct.category else remoteAct.category
@@ -1356,6 +1417,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     title = finalTitle,
                     description = finalDesc,
                     date = finalDate,
+                    endDate = finalEndDate,
                     location = finalLoc,
                     country = finalCountry,
                     category = finalCategory,
@@ -1367,7 +1429,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else if (localAct != null) {
                 val compositeKey = "${localAct.title.trim().lowercase()}_${localAct.date.trim()}"
                 if (!tombstones.contains("activity_$compositeKey")) {
-                    if (isAdmin || !isFirstSync) {
+                    if (isAdmin) {
                         mergedMap[id] = localAct
                     }
                 }
@@ -1400,7 +1462,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalAct = if (useLocal) localAct else remoteAct
                 mergedListNoId.add(finalAct)
             } else if (localAct != null) {
-                if (isAdmin || !isFirstSync) {
+                if (isAdmin) {
                     mergedListNoId.add(localAct)
                 }
             } else {
@@ -1534,8 +1596,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             val isAdmin = checkIfAdmin()
 
-            // 1. Fetch remote data from cloud
-            val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { emptyList() }
+            // 1. Fetch remote data from cloud (nullable to distinguish fetch failures from empty list)
+            val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch activities", e); null }
             val isUserAdmin = userEmail.trim().lowercase() == "coordinador@je.org" || isAdmin
             val remoteMembers = try {
                 if (userEmail.isNotBlank()) {
@@ -1545,7 +1607,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     emptyList()
                 }
             } catch (e: Exception) {
-                emptyList()
+                Log.e("AppViewModel", "Failed to fetch single member profile", e)
+                null
             }
             
             // If the user is coordinator or admin, fetch and populate _adminMembersList in-memory directly from cloud
@@ -1559,11 +1622,36 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     Log.e("AppViewModel", "Failed to load in-memory members: ${e.localizedMessage}")
                 }
             }
-            val remoteNotifications = try { CloudSyncClient.fetchNotifications(url) } catch (e: Exception) { emptyList() }
-            val remoteEnrollments = try { CloudSyncClient.fetchEnrollments(url) } catch (e: Exception) { emptyList() }
-            val remoteArticles = try { CloudSyncClient.fetchArticles(url) } catch (e: Exception) { emptyList() }
+            val remoteNotifications = try { CloudSyncClient.fetchNotifications(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch notifications", e); null }
+            val remoteEnrollments = try { CloudSyncClient.fetchEnrollments(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch enrollments", e); null }
+            val remoteArticles = try { CloudSyncClient.fetchArticles(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch articles", e); null }
+            val remoteTombstonesList = try { CloudSyncClient.fetchTombstones(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch tombstones", e); null }
 
-            val isFirstSync = !sharedPrefs.getBoolean(hasSyncedKey, false) && (remoteActivities.isNotEmpty() || remoteMembers.isNotEmpty() || remoteArticles.isNotEmpty())
+            val localTombstones = getTombstones(userEmail)
+            val mergedTombstones = if (remoteTombstonesList != null) {
+                (localTombstones + remoteTombstonesList).toSet()
+            } else {
+                localTombstones
+            }
+
+            if (mergedTombstones != localTombstones) {
+                val suffix = if (userEmail.isBlank()) "" else "_${userEmail.trim().lowercase()}"
+                sharedPrefs.edit().putStringSet("sync_tombstones$suffix", mergedTombstones.toMutableSet()).apply()
+            }
+
+            if (remoteTombstonesList != null && mergedTombstones.size > remoteTombstonesList.size && isUserAdmin) {
+                try {
+                    CloudSyncClient.uploadTombstones(url, mergedTombstones.toList())
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload merged tombstones to cloud", e)
+                }
+            }
+
+            val isFirstSync = !sharedPrefs.getBoolean(hasSyncedKey, false) && (
+                (remoteActivities != null && remoteActivities.isNotEmpty()) ||
+                (remoteMembers != null && remoteMembers.isNotEmpty()) ||
+                (remoteArticles != null && remoteArticles.isNotEmpty())
+            )
 
             // 2. Fetch local data from Room
             val localActivities = repository.allActivities.first()
@@ -1572,63 +1660,124 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val localEnrollments = repository.allEnrollments.first()
             val localArticles = repository.allArticles.first()
 
-            // 3. Bidirectional merge
+            // 3. Bidirectional merge (with defensive non-wipe fallback if downloads failed)
             // Merging Activities with smart overwrite prevention
-            val mergedActivities = smartMergeActivities(localActivities, remoteActivities, isFirstSync, isUserAdmin)
-
-            // Merging Members securely to preserve Admin-assigned carnet images and key updates Bidirectionally
-            val mergedMembers = smartMergeMembers(localMembers, remoteMembers, isFirstSync)
-
-            // Merging Enrollments
-            val mergedEnrollments = if (isFirstSync) {
-                // Device switch / First sync: Retrieve all active registrations from the cloud to restore user's session
-                (localEnrollments + remoteEnrollments).distinctBy { 
-                    "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
-                }
+            val mergedActivities = if (remoteActivities != null) {
+                smartMergeActivities(localActivities, remoteActivities, isFirstSync, isUserAdmin)
             } else {
-                // Bidirectional sync with Authority Rules:
-                // 1. For the logged-in user (self), the local database is the authority (allows adding, deleting, and editing reminders locally).
-                // 2. For other users, the cloud database is the authority (inherits updates/deletions from others, prevents overwriting with stale local copies).
-                val selfEnrollments = localEnrollments.filter { 
-                    it.memberEmail.trim().lowercase() == userEmail.trim().lowercase() 
-                }
-                val otherRemoteEnrollments = remoteEnrollments.filter { 
-                    it.memberEmail.trim().lowercase() != userEmail.trim().lowercase() 
-                }
-                
-                // If the logged-in user deleted their local enrollment, it is omitted from selfEnrollments, and thus omitted from the cloud.
-                // If it is present, it takes precedence over the cloud version of themselves.
-                (selfEnrollments + otherRemoteEnrollments).distinctBy { 
-                    "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
-                }
+                localActivities
             }
 
+            // Merging Members securely to preserve Admin-assigned carnet images and key updates Bidirectionally
+            val mergedMembers = if (remoteMembers != null) {
+                smartMergeMembers(localMembers, remoteMembers, isFirstSync)
+            } else {
+                localMembers
+            }
+
+            // Merging Enrollments
+            val mergedEnrollments = if (remoteEnrollments != null) {
+                if (isFirstSync) {
+                    // Device switch / First sync: Retrieve all active registrations from the cloud to restore user's session
+                    (localEnrollments + remoteEnrollments).distinctBy { 
+                        "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+                    }
+                } else {
+                    // Bidirectional sync with Authority Rules:
+                    // 1. For the logged-in user (self), the local database is the authority (allows adding, deleting, and editing reminders locally).
+                    // 2. For other users, the cloud database is the authority (inherits updates/deletions from others, prevents overwriting with stale local copies).
+                    val selfEnrollments = localEnrollments.filter { 
+                        it.memberEmail.trim().lowercase() == userEmail.trim().lowercase() 
+                    }
+                    val otherRemoteEnrollments = remoteEnrollments.filter { 
+                        it.memberEmail.trim().lowercase() != userEmail.trim().lowercase() 
+                    }
+                    
+                    // If the logged-in user deleted their local enrollment, it is omitted from selfEnrollments, and thus omitted from the cloud.
+                    // If it is present, it takes precedence over the cloud version of themselves.
+                    (selfEnrollments + otherRemoteEnrollments).distinctBy { 
+                        "${it.activityId}_${it.memberEmail.trim().lowercase()}" 
+                    }
+                }
+            } else {
+                localEnrollments
+            }
+
+            // Clean enrollments so they don't contain references to deleted activities
+            val activeActivityIds = mergedActivities.map { it.id }.toSet()
+            val cleanEnrollments = mergedEnrollments.filter { it.activityId in activeActivityIds }
+
             // Merging Articles/Reports with smart overwrite prevention
-            val mergedArticles = smartMergeArticles(localArticles, remoteArticles, isFirstSync, isUserAdmin)
+            val mergedArticles = if (remoteArticles != null) {
+                smartMergeArticles(localArticles, remoteArticles, isFirstSync, isUserAdmin)
+            } else {
+                localArticles
+            }
 
             // Merging Notifications (separate local filtered vs. cloud persisted lists)
-            val localMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true, isAdmin = isUserAdmin)
-            val cloudMergedNotifications = smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = false, isAdmin = isUserAdmin)
+            val localMergedNotifications = if (remoteNotifications != null) {
+                smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = true, isAdmin = isUserAdmin)
+            } else {
+                localNotifications
+            }
+            val cloudMergedNotifications = if (remoteNotifications != null) {
+                smartMergeNotifications(localNotifications, remoteNotifications, isFirstSync, filterByTombstones = false, isAdmin = isUserAdmin)
+            } else {
+                null
+            }
 
             // 4. Upload merged data back to Cloud (Cooperative Bidirectional Synchronization)
             // To ensure all data created or altered locally is fully published and synchronized with the cloud backend,
             // we perform a complete, robust push of all tables bidirectionally for all roles.
-            if (isUserAdmin) {
-                CloudSyncClient.uploadActivities(url, mergedActivities)
+            // But we ONLY upload if we successfully fetched the remote state (to prevent corrupting cloud data with old state in case of fetch failure).
+            val uploadFailedModules = mutableListOf<String>()
+
+            if (isUserAdmin && remoteActivities != null) {
+                try {
+                    CloudSyncClient.uploadActivities(url, mergedActivities)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed uploading activities back to cloud", e)
+                    uploadFailedModules.add("actividades")
+                }
             }
-            if (userEmail.isNotBlank()) {
+            if (userEmail.isNotBlank() && remoteMembers != null) {
                 // All users (including coordinator/admin) only sync and upload their own profile in background sync
                 val selfProfile = mergedMembers.find { it.email.trim().lowercase() == userEmail.trim().lowercase() }
                 if (selfProfile != null) {
-                    CloudSyncClient.uploadSingleMember(url, selfProfile)
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, selfProfile)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed uploading user profile back to cloud", e)
+                        uploadFailedModules.add("perfil")
+                    }
                 }
             }
             if (isUserAdmin) {
-                // Upload cloud-merged notifications which preserve other users' read/clear status
-                CloudSyncClient.uploadNotifications(url, cloudMergedNotifications)
-                CloudSyncClient.uploadArticles(url, mergedArticles)
+                if (remoteNotifications != null && cloudMergedNotifications != null) {
+                    try {
+                        CloudSyncClient.uploadNotifications(url, cloudMergedNotifications)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed uploading merged notifications back to cloud", e)
+                        uploadFailedModules.add("notificaciones")
+                    }
+                }
+                if (remoteArticles != null) {
+                    try {
+                        CloudSyncClient.uploadArticles(url, mergedArticles)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed uploading merged articles back to cloud", e)
+                        uploadFailedModules.add("artículos")
+                    }
+                }
             }
-            CloudSyncClient.uploadEnrollments(url, mergedEnrollments)
+            if (remoteEnrollments != null) {
+                try {
+                    CloudSyncClient.uploadEnrollments(url, cleanEnrollments)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed uploading clean enrollments back to cloud", e)
+                    uploadFailedModules.add("inscripciones")
+                }
+            }
             
             // Sync preferences bidirectionally using timestamps
             val remotePrefs = try { CloudSyncClient.fetchPreferences(url, userEmail) } catch (e: Exception) { null }
@@ -1672,7 +1821,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.overwriteMembers(filteredMembers)
             
             repository.overwriteNotifications(localMergedNotifications)
-            repository.overwriteEnrollments(mergedEnrollments)
+            repository.overwriteEnrollments(cleanEnrollments)
             repository.overwriteArticles(mergedArticles)
 
             // Save first sync completion flag
@@ -1686,7 +1835,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            "Sincronización Completa ✓ Sincronizados ${mergedArticles.size} artículos, ${mergedActivities.size} eventos, ${mergedMembers.size} perfiles y ${mergedEnrollments.size} inscripciones."
+            val statusSuffix = if (uploadFailedModules.isNotEmpty()) {
+                " (Sincronización hacia la nube incompleta en: ${uploadFailedModules.joinToString(", ")})"
+            } else {
+                ""
+            }
+
+            "Sincronización Completa ✓ Sincronizados ${mergedArticles.size} artículos, ${mergedActivities.size} eventos, ${mergedMembers.size} perfiles y ${mergedEnrollments.size} inscripciones.$statusSuffix"
         }
     }
 

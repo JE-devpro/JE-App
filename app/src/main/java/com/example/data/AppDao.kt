@@ -95,6 +95,9 @@ interface AppDao {
     @Query("DELETE FROM enrollments WHERE activityId = :activityId AND LOWER(TRIM(memberEmail)) = LOWER(TRIM(:memberEmail))")
     suspend fun deleteEnrollment(activityId: Int, memberEmail: String)
 
+    @Query("DELETE FROM enrollments WHERE activityId = :activityId")
+    suspend fun deleteEnrollmentsByActivityId(activityId: Int)
+
     // Administration Notifications / Alerts
     @Query("SELECT * FROM je_notifications ORDER BY id DESC")
     fun getAllNotifications(): Flow<List<EcoNotification>>

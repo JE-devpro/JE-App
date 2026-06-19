@@ -21,7 +21,8 @@ data class CloudDatabase(
     val enrollments: List<EcoEnrollment> = emptyList(),
     val articles: List<EcoArticle> = emptyList(),
     val preferences: com.example.data.CloudPreferences? = null,
-    val userPreferences: Map<String, com.example.data.CloudPreferences>? = emptyMap()
+    val userPreferences: Map<String, com.example.data.CloudPreferences>? = emptyMap(),
+    val tombstones: List<String> = emptyList()
 )
 
 object CloudSyncClient {
@@ -61,6 +62,9 @@ object CloudSyncClient {
     private val memberAdapter = moshi.adapter(Member::class.java)
     private val userPreferencesMapAdapter = moshi.adapter<Map<String, com.example.data.CloudPreferences>>(
         Types.newParameterizedType(Map::class.java, String::class.java, com.example.data.CloudPreferences::class.java)
+    )
+    private val tombstonesAdapter = moshi.adapter<List<String>>(
+        Types.newParameterizedType(List::class.java, String::class.java)
     )
 
     private fun isJsonBlob(url: String): Boolean {
@@ -729,6 +733,63 @@ object CloudSyncClient {
         } catch (e: Exception) {
             Log.e(TAG, "Exception uploadPreferences", e)
             wrapException("subir preferencias", e)
+        }
+    }
+
+    fun fetchTombstones(baseUrl: String): List<String> {
+        if (isJsonBlob(baseUrl)) {
+            return fetchFullDatabase(baseUrl).tombstones
+        }
+        val url = formatUrl(baseUrl, "tombstones")
+        Log.d(TAG, "Fetching tombstones from $url")
+        val request = Request.Builder().url(url).get().build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 404) return emptyList()
+                    throwNetworkError(response.code, "obtener borrados")
+                }
+                val bodyString = response.body?.string() ?: return emptyList()
+                if (bodyString == "null") return emptyList()
+                return try {
+                    tombstonesAdapter.fromJson(bodyString) ?: emptyList()
+                } catch (e: Exception) {
+                    try {
+                        val type = Types.newParameterizedType(Map::class.java, String::class.java, String::class.java)
+                        val mapAdapter = moshi.adapter<Map<String, String>>(type)
+                        val map = mapAdapter.fromJson(bodyString)
+                        map?.values?.toList() ?: emptyList()
+                    } catch (ex: Exception) {
+                        emptyList()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetchTombstones", e)
+            wrapException("obtener borrados", e)
+        }
+    }
+
+    fun uploadTombstones(baseUrl: String, list: List<String>): Boolean {
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updated = db.copy(tombstones = list)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val url = formatUrl(baseUrl, "tombstones")
+        Log.d(TAG, "Uploading ${list.size} tombstones to $url")
+        try {
+            val json = tombstonesAdapter.toJson(list)
+            val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throwNetworkError(response.code, "subir borrados")
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception uploadTombstones", e)
+            wrapException("subir borrados", e)
         }
     }
 }
