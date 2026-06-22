@@ -39,6 +39,14 @@ object TimezoneHelper {
         return null
     }
 
+    fun isPastRegistrationDeadline(registrationDeadline: String): Boolean {
+        val trimmed = registrationDeadline.trim()
+        if (trimmed.isBlank()) return false
+        val deadlineEpoch = parseEcuadorDateTime(trimmed) ?: return false
+        val currentEpoch = System.currentTimeMillis()
+        return currentEpoch > deadlineEpoch
+    }
+
     /**
      * Converts a stored Ecuador datetime string (e.g. "2026-06-15 22:30") to the corresponding
      * local timezone date and time strings.

@@ -1050,8 +1050,8 @@ fun MainScreen(viewModel: AppViewModel) {
     if (showAddActivityDialog) {
         AddActivityDialog(
             onDismiss = { showAddActivityDialog = false },
-            onAdd = { title, desc, date, endDate, loc, country, cat, org, evType, isMandatory ->
-                viewModel.addActivity(title, desc, date, endDate, loc, country, cat, org, evType, isMandatory)
+            onAdd = { title, desc, date, endDate, loc, country, cat, org, evType, isMandatory, deadline ->
+                viewModel.addActivity(title, desc, date, endDate, loc, country, cat, org, evType, isMandatory, deadline)
                 showAddActivityDialog = false
             }
         )
@@ -1667,25 +1667,45 @@ fun ActivityCard(
                 }
                 
                 // Enrollment Button Action
-                Button(
-                    onClick = onToggleEnroll,
-                    shape = RoundedCornerShape(20.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (item.isUserRegistered) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
-                    ),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                ) {
-                    Icon(
-                        imageVector = if (item.isUserRegistered) Icons.Filled.CheckCircle else Icons.Filled.Add,
-                        contentDescription = null,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = if (item.isUserRegistered) "Inscrito" else "Unirse",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                val isDeadlinePassed = com.example.util.TimezoneHelper.isPastRegistrationDeadline(item.registrationDeadline)
+                if (isDeadlinePassed && !item.isUserRegistered) {
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(20.dp)
+                            )
+                            .padding(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = "Cerrado",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    Button(
+                        onClick = onToggleEnroll,
+                        shape = RoundedCornerShape(20.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (item.isUserRegistered) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        enabled = !isDeadlinePassed
+                    ) {
+                        Icon(
+                            imageVector = if (item.isUserRegistered) Icons.Filled.CheckCircle else Icons.Filled.Add,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (item.isUserRegistered) "Inscrito" else "Unirse",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -1697,7 +1717,7 @@ fun ActivityCard(
 @Composable
 fun AddActivityDialog(
     onDismiss: () -> Unit,
-    onAdd: (String, String, String, String, String, String, String, String, String, Boolean) -> Unit
+    onAdd: (String, String, String, String, String, String, String, String, String, Boolean, String) -> Unit
 ) {
     val context = LocalContext.current
     var title by remember { mutableStateOf("") }
@@ -1706,6 +1726,52 @@ fun AddActivityDialog(
     var timePart by remember { mutableStateOf("10:00") }
     var endDatePart by remember { mutableStateOf("2026-06-05") }
     var endTimePart by remember { mutableStateOf("12:00") }
+
+    var hasRegistrationDeadline by remember { mutableStateOf(false) }
+    var deadlineDatePart by remember { mutableStateOf("2026-06-05") }
+    var deadlineTimePart by remember { mutableStateOf("10:00") }
+
+    val showDeadlineDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (deadlineDatePart.isNotBlank()) {
+            try {
+                val parts = deadlineDatePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                deadlineDatePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showDeadlineTimePicker = {
+        val hourMinute = deadlineTimePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 10
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                deadlineTimePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
 
     val showDatePicker = {
         val calendar = java.util.Calendar.getInstance()
@@ -1966,11 +2032,94 @@ fun AddActivityDialog(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "2. Fecha y Ubicación",
+                                    text = "2. Fecha, Ubicación y Límite",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
+                                // UNIQUE_ADD_DATE_SELECTOR
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    androidx.compose.material3.Checkbox(
+                                        checked = hasRegistrationDeadline,
+                                        onCheckedChange = { hasRegistrationDeadline = it }
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Establecer fecha límite de inscripción",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                if (hasRegistrationDeadline) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1.3f)
+                                                .clickable { showDeadlineDatePicker() }
+                                        ) {
+                                            OutlinedTextField(
+                                                value = deadlineDatePart,
+                                                onValueChange = {},
+                                                label = { Text("Fecha límite") },
+                                                readOnly = true,
+                                                enabled = false,
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.CalendarToday,
+                                                        contentDescription = "Seleccionar fecha límite"
+                                                    )
+                                                },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(0.9f)
+                                                .clickable { showDeadlineTimePicker() }
+                                        ) {
+                                            OutlinedTextField(
+                                                value = deadlineTimePart,
+                                                onValueChange = {},
+                                                label = { Text("Hora límite") },
+                                                readOnly = true,
+                                                enabled = false,
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Event,
+                                                        contentDescription = "Seleccionar hora límite"
+                                                    )
+                                                },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
 
                                 Text(
                                     text = "Fecha y Hora de Inicio",
@@ -2329,6 +2478,7 @@ fun AddActivityDialog(
                                 }
                                 val rawEcuadorDateStr = "${datePart.trim()} ${timePart.trim()}"
                                 val rawEcuadorEndDateStr = "${endDatePart.trim()} ${endTimePart.trim()}"
+                                val rawEcuadorDeadlineStr = if (hasRegistrationDeadline) "${deadlineDatePart.trim()} ${deadlineTimePart.trim()}" else ""
                                 onAdd(
                                     title,
                                     desc,
@@ -2339,7 +2489,8 @@ fun AddActivityDialog(
                                     cat,
                                     org.ifBlank { "Voluntariado Juvenil" },
                                     eventType,
-                                    isMandatory
+                                    isMandatory,
+                                    rawEcuadorDeadlineStr
                                 )
                             }
                         },
@@ -4820,7 +4971,7 @@ fun CalendarTab(
                         contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Text("Recordatorio de Evento 🌿", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("Recordatorio de Evento", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                 }
             },
             text = {
@@ -5664,21 +5815,43 @@ fun CalendarEventCard(
                 Spacer(modifier = Modifier.width(8.dp))
 
                 // Register Button
-                Button(
-                    shape = RoundedCornerShape(14.dp),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (event.isUserRegistered) MaterialTheme.colorScheme.primaryContainer else typeColor
-                    ),
-                    modifier = Modifier.height(38.dp),
-                    onClick = onRegister
-                ) {
-                    Text(
-                        text = if (event.isUserRegistered) "Inscrito ✓" else "Inscribirme",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = if (event.isUserRegistered) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
-                    )
+                val isDeadlinePassed = com.example.util.TimezoneHelper.isPastRegistrationDeadline(event.registrationDeadline)
+                if (isDeadlinePassed && !event.isUserRegistered) {
+                    Box(
+                        modifier = Modifier
+                            .height(38.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(14.dp)
+                            )
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "Límite vencido",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    Button(
+                        shape = RoundedCornerShape(14.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (event.isUserRegistered) MaterialTheme.colorScheme.primaryContainer else typeColor
+                        ),
+                        modifier = Modifier.height(38.dp),
+                        onClick = onRegister,
+                        enabled = !isDeadlinePassed
+                    ) {
+                        Text(
+                            text = if (event.isUserRegistered) "Inscrito ✓" else "Inscribirme",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (event.isUserRegistered) MaterialTheme.colorScheme.onPrimaryContainer else Color.White
+                        )
+                    }
                 }
             }
         }
@@ -10317,6 +10490,55 @@ fun ActivityEditDialog(
     var endDatePart by remember { mutableStateOf(initialEndDatePart) }
     var endTimePart by remember { mutableStateOf(initialEndTimePart) }
 
+    val initialDeadlinePart = if (activity.registrationDeadline.isNotBlank()) activity.registrationDeadline.substringBefore(" ").trim() else ""
+    val initialDeadlineTimePart = if (activity.registrationDeadline.isNotBlank() && activity.registrationDeadline.contains(" ")) activity.registrationDeadline.substringAfter(" ").trim() else "10:00"
+
+    var hasRegistrationDeadline by remember { mutableStateOf(activity.registrationDeadline.isNotBlank()) }
+    var deadlineDatePart by remember { mutableStateOf(if (initialDeadlinePart.isNotBlank()) initialDeadlinePart else "2026-06-05") }
+    var deadlineTimePart by remember { mutableStateOf(initialDeadlineTimePart) }
+
+    val showDeadlineDatePicker = {
+        val calendar = java.util.Calendar.getInstance()
+        if (deadlineDatePart.isNotBlank()) {
+            try {
+                val parts = deadlineDatePart.split("-")
+                if (parts.size == 3) {
+                    calendar.set(java.util.Calendar.YEAR, parts[0].toInt())
+                    calendar.set(java.util.Calendar.MONTH, parts[1].toInt() - 1)
+                    calendar.set(java.util.Calendar.DAY_OF_MONTH, parts[2].toInt())
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        android.app.DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val formattedMonth = String.format("%02d", month + 1)
+                val formattedDay = String.format("%02d", dayOfMonth)
+                deadlineDatePart = "$year-$formattedMonth-$formattedDay"
+            },
+            calendar.get(java.util.Calendar.YEAR),
+            calendar.get(java.util.Calendar.MONTH),
+            calendar.get(java.util.Calendar.DAY_OF_MONTH)
+        ).show()
+    }
+
+    val showDeadlineTimePicker = {
+        val hourMinute = deadlineTimePart.split(":")
+        val hour = hourMinute.getOrNull(0)?.toIntOrNull() ?: 10
+        val minute = hourMinute.getOrNull(1)?.toIntOrNull() ?: 0
+        android.app.TimePickerDialog(
+            context,
+            { _, selectedHour, selectedMinute ->
+                deadlineTimePart = String.format("%02d:%02d", selectedHour, selectedMinute)
+            },
+            hour,
+            minute,
+            true // is24HourView
+        ).show()
+    }
+
     val showDatePicker = {
         val calendar = java.util.Calendar.getInstance()
         if (datePart.isNotBlank()) {
@@ -10601,11 +10823,94 @@ fun ActivityEditDialog(
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "2. Fecha y Ubicación",
+                                    text = "2. Fecha, Ubicación y Límite",
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
+                                // UNIQUE_EDIT_DATE_SELECTOR
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    androidx.compose.material3.Checkbox(
+                                        checked = hasRegistrationDeadline,
+                                        onCheckedChange = { hasRegistrationDeadline = it }
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Establecer fecha límite de inscripción",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+
+                                if (hasRegistrationDeadline) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1.3f)
+                                                .clickable { showDeadlineDatePicker() }
+                                        ) {
+                                            OutlinedTextField(
+                                                value = deadlineDatePart,
+                                                onValueChange = {},
+                                                label = { Text("Fecha límite") },
+                                                readOnly = true,
+                                                enabled = false,
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.CalendarToday,
+                                                        contentDescription = "Seleccionar fecha límite"
+                                                    )
+                                                },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(0.9f)
+                                                .clickable { showDeadlineTimePicker() }
+                                        ) {
+                                            OutlinedTextField(
+                                                value = deadlineTimePart,
+                                                onValueChange = {},
+                                                label = { Text("Hora límite") },
+                                                readOnly = true,
+                                                enabled = false,
+                                                trailingIcon = {
+                                                    Icon(
+                                                        imageVector = Icons.Filled.Event,
+                                                        contentDescription = "Seleccionar hora límite"
+                                                    )
+                                                },
+                                                colors = OutlinedTextFieldDefaults.colors(
+                                                    disabledTextColor = MaterialTheme.colorScheme.onSurface,
+                                                    disabledBorderColor = MaterialTheme.colorScheme.outline,
+                                                    disabledLabelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    disabledTrailingIconColor = MaterialTheme.colorScheme.primary
+                                                ),
+                                                modifier = Modifier.fillMaxWidth(),
+                                                singleLine = true
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(14.dp))
 
                                 Text(
                                     text = "Fecha y Hora de Inicio",
@@ -10962,7 +11267,7 @@ fun ActivityEditDialog(
                                 } else {
                                     loc.ifBlank { "Presencial" }
                                 }
-                                val updated = activity.copy(
+                                 val updated = activity.copy(
                                     title = title,
                                     description = desc,
                                     date = "${datePart.trim()} ${timePart.trim()}",
@@ -10972,7 +11277,8 @@ fun ActivityEditDialog(
                                     category = cat,
                                     organizer = org.ifBlank { "Voluntariado Juvenil" },
                                     eventType = eventType,
-                                    isMandatory = isMandatory
+                                    isMandatory = isMandatory,
+                                    registrationDeadline = if (hasRegistrationDeadline) "${deadlineDatePart.trim()} ${deadlineTimePart.trim()}" else ""
                                 )
                                 onSaveClick(updated)
                             }

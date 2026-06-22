@@ -18,7 +18,8 @@ data class EcoActivity(
     val organizer: String,
     val isUserRegistered: Boolean = false,
     val eventType: String = "Voluntariado", // Event modes: "Talleres", "Voluntariado", "Charlas"
-    val isMandatory: Boolean = false
+    val isMandatory: Boolean = false,
+    val registrationDeadline: String = ""
 )
 
 @Entity(tableName = "carnet_profile")

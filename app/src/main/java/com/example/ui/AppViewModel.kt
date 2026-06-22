@@ -788,7 +788,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         category: String,
         organizer: String,
         eventType: String = "Voluntariado",
-        isMandatory: Boolean = false
+        isMandatory: Boolean = false,
+        registrationDeadline: String = ""
     ) {
         viewModelScope.launch(Dispatchers.IO) {
             val activity = EcoActivity(
@@ -801,7 +802,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 category = category,
                 organizer = organizer,
                 eventType = eventType,
-                isMandatory = isMandatory
+                isMandatory = isMandatory,
+                registrationDeadline = registrationDeadline
             )
             repository.insertActivity(activity)
             removeTombstone("activity_${title.trim().lowercase()}_${date.trim()}")
@@ -1410,6 +1412,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalCategory = if (useLocal) localAct.category else remoteAct.category
                 val finalOrganizer = if (useLocal) localAct.organizer else remoteAct.organizer
                 val finalEventType = if (useLocal) localAct.eventType else remoteAct.eventType
+                val finalRegistrationDeadline = if (useLocal) localAct.registrationDeadline else remoteAct.registrationDeadline
                 
                 val finalRegistered = localAct.isUserRegistered
 
@@ -1424,7 +1427,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     organizer = finalOrganizer,
                     eventType = finalEventType,
                     isMandatory = finalMandatory,
-                    isUserRegistered = finalRegistered
+                    isUserRegistered = finalRegistered,
+                    registrationDeadline = finalRegistrationDeadline
                 )
             } else if (localAct != null) {
                 val compositeKey = "${localAct.title.trim().lowercase()}_${localAct.date.trim()}"
