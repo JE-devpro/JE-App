@@ -7209,6 +7209,14 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
         var passwordVisible by remember { mutableStateOf(false) }
         var editRole by remember { mutableStateOf(memberToEdit.role) }
         var editCountry by remember { mutableStateOf(memberToEdit.country) }
+        var editInclusionYear by remember {
+            val year = if (memberToEdit.joinDate.contains("/")) {
+                memberToEdit.joinDate.substringAfterLast("/")
+            } else {
+                memberToEdit.joinDate
+            }
+            mutableStateOf(year)
+        }
         var editEmoji by remember { mutableStateOf(memberToEdit.emojiAvatar) }
         var editIsAdmin by remember { mutableStateOf(memberToEdit.isAdmin) }
         var editPhotoUri by remember { mutableStateOf<String?>(memberToEdit.photoUri) }
@@ -7392,6 +7400,17 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         label = { Text("País") },
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true
+                                    )
+
+                                    OutlinedTextField(
+                                        value = editInclusionYear,
+                                        onValueChange = { editInclusionYear = it },
+                                        label = { Text("Año de Inclusión") },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        singleLine = true,
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                                        )
                                     )
                                 }
                             }
@@ -7609,6 +7628,12 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                             Button(
                                 onClick = {
                                     val finalPassword = editPassword.trim()
+                                    val newJoinDate = if (memberToEdit.joinDate.contains("/")) {
+                                        val prefix = memberToEdit.joinDate.substringBeforeLast("/")
+                                        "$prefix/${editInclusionYear.trim()}"
+                                    } else {
+                                        editInclusionYear.trim()
+                                    }
                                     val updated = memberToEdit.copy(
                                         fullName = editName,
                                         role = editRole,
@@ -7619,7 +7644,8 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         qrUri = editQrUri,
                                         customCara1Uri = editCara1Uri,
                                         customCara2Uri = editCara2Uri,
-                                        password = finalPassword
+                                        password = finalPassword,
+                                        joinDate = newJoinDate
                                     )
                                     viewModel.modifyMemberProfile(updated)
                                     editingMember = null
