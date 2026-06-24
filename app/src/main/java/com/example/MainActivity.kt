@@ -279,6 +279,50 @@ fun MainScreen(viewModel: AppViewModel) {
     val isCoordinadorMode = (currentMember.email == "coordinador@je.org") || currentMember.isAdmin || isOverrideCoordinator
 
     val context = LocalContext.current
+
+    val appUpdateState by viewModel.appUpdateState.collectAsStateWithLifecycle()
+
+    val currentVersionCode = remember(context) {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                pInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (e: Exception) {
+            1
+        }
+    }
+    val currentVersionName = remember(context) {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.checkForUpdates()
+    }
+
+    var dismissUpdateDialogVersionCode by remember { mutableStateOf(0) }
+    val isUpdateAvailable = appUpdateState != null && appUpdateState!!.latestVersionCode > currentVersionCode
+    val showUpdateDialog = isUpdateAvailable && appUpdateState!!.latestVersionCode != dismissUpdateDialogVersionCode
+
+    if (showUpdateDialog) {
+        val update = appUpdateState!!
+        AppUpdateDialog(
+            update = update,
+            currentVersionName = currentVersionName,
+            currentVersionCode = currentVersionCode,
+            isPreview = false,
+            onDismiss = { dismissUpdateDialogVersionCode = update.latestVersionCode }
+        )
+    }
+
     val alertPrefs = remember(currentMember.email) {
         context.getSharedPreferences("global_alerts_prefs", Context.MODE_PRIVATE)
     }
@@ -8872,6 +8916,28 @@ fun AppSettingsDialog(
 
     val context = LocalContext.current
 
+    val currentVersionCode = remember(context) {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                pInfo.longVersionCode.toInt()
+            } else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (e: Exception) {
+            1
+        }
+    }
+    val currentVersionName = remember(context) {
+        try {
+            val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            pInfo.versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -9113,11 +9179,13 @@ fun AppSettingsDialog(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("• Versión de App: JE-App Production v2.5 Stable", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("• Versión de App: v$currentVersionName (Código: $currentVersionCode)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("• Estado de red: Online & Auto-heal habilitado", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("• Motor de sincronización: OK (Firebase Realtime DB)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
+
+
 
                 Button(
                     onClick = {
@@ -10057,6 +10125,231 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                             fontWeight = FontWeight.Bold
                         )
                     }
+                }
+            }
+        }
+
+        val appUpdateState by viewModel.appUpdateState.collectAsStateWithLifecycle()
+
+        val currentVersionCode = remember(context) {
+            try {
+                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    pInfo.longVersionCode.toInt()
+                } else {
+                    @Suppress("DEPRECATION")
+                    pInfo.versionCode
+                }
+            } catch (e: Exception) {
+                1
+            }
+        }
+        val currentVersionName = remember(context) {
+            try {
+                val pInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                pInfo.versionName ?: "1.0"
+            } catch (e: Exception) {
+                "1.0"
+            }
+        }
+
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = cardBg2),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Text(
+                        text = "Configuración de Actualizaciones",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+
+                Text(
+                    text = "Configura y previsualiza las notificaciones de actualización para todos los miembros de Jóvenes y Ecosistemas.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    lineHeight = 16.sp
+                )
+
+                val updateUrl by viewModel.updateJsonUrl.collectAsStateWithLifecycle()
+                var editUpdateUrl by remember(updateUrl) { mutableStateOf(updateUrl) }
+
+                OutlinedTextField(
+                    value = editUpdateUrl,
+                    onValueChange = {
+                        editUpdateUrl = it
+                        viewModel.updateUpdateJsonUrl(it)
+                    },
+                    label = { Text("URL del archivo version.json (GitHub)") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        IconButton(onClick = { 
+                            viewModel.checkForUpdates()
+                            Toast.makeText(context, "Consultando archivo JSON remoto...", Toast.LENGTH_SHORT).show()
+                        }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Sincronizar URL")
+                        }
+                    }
+                )
+
+                Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+
+                Text(
+                    text = "Valores de Simulación para Previsualización",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+
+                var previewVerName by remember { mutableStateOf("2.6") }
+                var previewVerCode by remember { mutableStateOf("26") }
+                var previewUrl by remember { mutableStateOf("https://github.com/davicholeon67/jovenes-ecosistemas/releases") }
+                var previewNotes by remember { mutableStateOf("• Correcciones críticas en la sincronización local y en la nube\n• Rediseño completo de la consola de administración en el módulo Nube\n• Nuevo previsualizador interactivo de actualizaciones obligatorias") }
+                var previewMandatory by remember { mutableStateOf(false) }
+
+                val liveUpdate = appUpdateState
+                if (liveUpdate != null) {
+                    Button(
+                        onClick = {
+                            previewVerName = liveUpdate.latestVersionName
+                            previewVerCode = liveUpdate.latestVersionCode.toString()
+                            previewUrl = liveUpdate.downloadUrl
+                            previewNotes = liveUpdate.releaseNotes
+                            previewMandatory = liveUpdate.minRequiredVersionCode > currentVersionCode
+                            Toast.makeText(context, "Campos precompletados con datos del JSON remoto.", Toast.LENGTH_SHORT).show()
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors().copy(
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f))
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Cargar datos reales del JSON remoto", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = previewVerName,
+                        onValueChange = { previewVerName = it },
+                        label = { Text("Ver. Name", fontSize = 11.sp) },
+                        modifier = Modifier.weight(1.2f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    OutlinedTextField(
+                        value = previewVerCode,
+                        onValueChange = { previewVerCode = it.filter { c -> c.isDigit() } },
+                        label = { Text("Ver. Code", fontSize = 11.sp) },
+                        modifier = Modifier.weight(0.8f),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                }
+
+                OutlinedTextField(
+                    value = previewUrl,
+                    onValueChange = { previewUrl = it },
+                    label = { Text("URL de descarga del botón", fontSize = 11.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                OutlinedTextField(
+                    value = previewNotes,
+                    onValueChange = { previewNotes = it },
+                    label = { Text("Notas de la versión (Novedades)", fontSize = 11.sp) },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 4,
+                    shape = RoundedCornerShape(8.dp)
+                )
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Forzar actualización obligatoria",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "El diálogo de actualización no se podrá cerrar.",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = previewMandatory,
+                        onCheckedChange = { previewMandatory = it }
+                    )
+                }
+
+                var showPreviewDialog by remember { mutableStateOf(false) }
+
+                Button(
+                    onClick = { showPreviewDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Previsualizar Alerta de Actualización", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+
+                if (showPreviewDialog) {
+                    val simulatedCode = previewVerCode.toIntOrNull() ?: 26
+                    val simulatedMinRequired = if (previewMandatory) (currentVersionCode + 1) else 0
+                    val mockUpdate = com.example.data.AppUpdate(
+                        latestVersionCode = simulatedCode,
+                        latestVersionName = previewVerName,
+                        downloadUrl = previewUrl,
+                        releaseNotes = previewNotes,
+                        minRequiredVersionCode = simulatedMinRequired
+                    )
+                    AppUpdateDialog(
+                        update = mockUpdate,
+                        currentVersionName = currentVersionName,
+                        currentVersionCode = currentVersionCode,
+                        isPreview = true,
+                        onDismiss = { showPreviewDialog = false }
+                    )
                 }
             }
         }
@@ -11318,6 +11611,139 @@ fun ActivityEditDialog(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Guardar Cambios", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AppUpdateDialog(
+    update: com.example.data.AppUpdate,
+    currentVersionName: String,
+    currentVersionCode: Int,
+    isPreview: Boolean = false,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val isForceUpdate = update.minRequiredVersionCode > currentVersionCode && !isPreview
+    
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { if (!isForceUpdate) onDismiss() }
+    ) {
+        Card(
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CloudDownload,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                Text(
+                    text = if (isPreview) "Previsualización: Actualización 🌿" else "Actualización Disponible 🌿",
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+
+                Text(
+                    text = "Nueva versión v${update.latestVersionName} disponible (versión instalada: v$currentVersionName).",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 120.dp)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .padding(12.dp)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Novedades:",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = update.releaseNotes,
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                if (isPreview) {
+                    Text(
+                        text = if (update.minRequiredVersionCode > currentVersionCode) "⚠️ Esta actualización está configurada como OBLIGATORIA." else "ℹ️ Esta actualización está configurada como OPCIONAL.",
+                        fontSize = 11.sp,
+                        color = if (update.minRequiredVersionCode > currentVersionCode) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (!isForceUpdate || isPreview) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Text(if (isPreview) "Cerrar" else "Más tarde", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    
+                    Button(
+                        onClick = {
+                            if (isPreview) {
+                                Toast.makeText(context, "Modo previsualización: Se abriría la URL de descarga: ${update.downloadUrl}", Toast.LENGTH_LONG).show()
+                            } else {
+                                try {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(update.downloadUrl))
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "No se pudo abrir el enlace de descarga.", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Descargar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }

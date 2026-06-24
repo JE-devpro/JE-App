@@ -114,3 +114,13 @@ data class CloudPreferences(
     val lastUpdated: Long = 0L
 )
 
+@JsonClass(generateAdapter = true)
+data class AppUpdate(
+    val latestVersionCode: Int,
+    val latestVersionName: String,
+    val downloadUrl: String,
+    val releaseNotes: String,
+    val minRequiredVersionCode: Int = 0
+)
+
+
