@@ -3,6 +3,7 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/icono_personalizado"
+        android:drawable="@drawable/mi_logo_personalizado"
+        android:left="2dp"
         android:gravity="center" />
 </layer-list>

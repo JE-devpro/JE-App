@@ -107,6 +107,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val _updateJsonUrl = MutableStateFlow("https://raw.githubusercontent.com/davicholeon67/jovenes-ecosistemas/main/version.json")
     val updateJsonUrl: StateFlow<String> = _updateJsonUrl.asStateFlow()
 
+    private val _updateSource = MutableStateFlow("cloud")
+    val updateSource: StateFlow<String> = _updateSource.asStateFlow()
+
     private val _appUpdateState = MutableStateFlow<AppUpdate?>(null)
     val appUpdateState: StateFlow<AppUpdate?> = _appUpdateState.asStateFlow()
 
@@ -115,27 +118,70 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _updateJsonUrl.value = newUrl
     }
 
+    fun updateUpdateSource(source: String) {
+        sharedPrefs.edit().putString("pref_update_source", source).apply()
+        _updateSource.value = source
+        checkForUpdates()
+    }
+
+    fun publishAppUpdateToCloud(update: AppUpdate, onSuccess: () -> Unit, onFailure: (String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val url = _cloudSyncUrl.value
+                if (url.isBlank()) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        onFailure("La URL de la Nube está vacía.")
+                    }
+                    return@launch
+                }
+                val result = CloudSyncClient.uploadAppUpdate(url, update)
+                if (result) {
+                    _appUpdateState.value = update
+                    viewModelScope.launch(Dispatchers.Main) {
+                        onSuccess()
+                    }
+                } else {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        onFailure("Error al subir los datos de actualización a la Nube.")
+                    }
+                }
+            } catch (e: Exception) {
+                viewModelScope.launch(Dispatchers.Main) {
+                    onFailure(e.localizedMessage ?: "Error desconocido al publicar")
+                }
+            }
+        }
+    }
+
     fun checkForUpdates() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val urlString = _updateJsonUrl.value
-                if (urlString.isBlank()) return@launch
-                val request = okhttp3.Request.Builder()
-                    .url(urlString)
-                    .build()
-                val client = okhttp3.OkHttpClient()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        Log.e("AppViewModel", "Failed to fetch version JSON: Code ${response.code}")
-                        return@launch
+                if (_updateSource.value == "cloud") {
+                    val url = _cloudSyncUrl.value
+                    if (url.isNotBlank()) {
+                        val update = CloudSyncClient.fetchAppUpdate(url)
+                        _appUpdateState.value = update
                     }
-                    val bodyString = response.body?.string() ?: return@launch
-                    val moshi = Moshi.Builder()
-                        .addLast(KotlinJsonAdapterFactory())
+                } else {
+                    val urlString = _updateJsonUrl.value
+                    if (urlString.isBlank()) return@launch
+                    val request = okhttp3.Request.Builder()
+                        .url(urlString)
                         .build()
-                    val adapter = moshi.adapter(AppUpdate::class.java)
-                    val update = adapter.fromJson(bodyString)
-                    _appUpdateState.value = update
+                    val client = okhttp3.OkHttpClient()
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            Log.e("AppViewModel", "Failed to fetch version JSON: Code ${response.code}")
+                            return@launch
+                        }
+                        val bodyString = response.body?.string() ?: return@launch
+                        val moshi = Moshi.Builder()
+                            .addLast(KotlinJsonAdapterFactory())
+                            .build()
+                        val adapter = moshi.adapter(AppUpdate::class.java)
+                        val update = adapter.fromJson(bodyString)
+                        _appUpdateState.value = update
+                    }
                 }
             } catch (e: Exception) {
                 Log.e("AppViewModel", "Error checking for updates: ${e.localizedMessage}")
@@ -148,6 +194,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _cloudSyncUrl.value = sharedPrefs.getString("pref_cloud_sync_url", defaultUrl) ?: defaultUrl
         _cloudSecurityKey.value = sharedPrefs.getString("pref_cloud_security_key", "JE-Organizacion-EcoTech-2026") ?: "JE-Organizacion-EcoTech-2026"
         _updateJsonUrl.value = sharedPrefs.getString("pref_update_json_url", "https://raw.githubusercontent.com/davicholeon67/jovenes-ecosistemas/main/version.json") ?: "https://raw.githubusercontent.com/davicholeon67/jovenes-ecosistemas/main/version.json"
+        _updateSource.value = sharedPrefs.getString("pref_update_source", "cloud") ?: "cloud"
         com.example.data.api.CloudSyncClient.cloudSecurityKey = _cloudSecurityKey.value
 
         _prefNotifActividades.value = sharedPrefs.getBoolean("pref_notif_actividades$suffix", sharedPrefs.getBoolean("pref_notif_actividades", true))

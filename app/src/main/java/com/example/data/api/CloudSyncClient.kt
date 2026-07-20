@@ -22,7 +22,8 @@ data class CloudDatabase(
     val articles: List<EcoArticle> = emptyList(),
     val preferences: com.example.data.CloudPreferences? = null,
     val userPreferences: Map<String, com.example.data.CloudPreferences>? = emptyMap(),
-    val tombstones: List<String> = emptyList()
+    val tombstones: List<String> = emptyList(),
+    val appUpdate: com.example.data.AppUpdate? = null
 )
 
 object CloudSyncClient {
@@ -146,7 +147,16 @@ object CloudSyncClient {
                 }
             }
             
-            CloudDatabase(activities, members, notifications, enrollments, articles, preferences, userPreferences)
+            val appUpdateJson = if (root.containsKey("appUpdate")) moshi.adapter(Any::class.java).toJson(root["appUpdate"]) else null
+            val appUpdate = if (appUpdateJson != null) {
+                try {
+                    moshi.adapter(com.example.data.AppUpdate::class.java).fromJson(appUpdateJson)
+                } catch (e: Exception) {
+                    null
+                }
+            } else null
+            
+            CloudDatabase(activities, members, notifications, enrollments, articles, preferences, userPreferences, emptyList(), appUpdate)
         } catch (e: Exception) {
             Log.e(TAG, "Error decoding database from jsonblob JSON", e)
             CloudDatabase()
@@ -170,6 +180,9 @@ object CloudSyncClient {
         }
         db.userPreferences?.let {
             map["userPreferences"] = it
+        }
+        db.appUpdate?.let {
+            map["appUpdate"] = it
         }
         val type = Types.newParameterizedType(Map::class.java, String::class.java, Any::class.java)
         return moshi.adapter<Map<String, Any>>(type).toJson(map)
@@ -733,6 +746,52 @@ object CloudSyncClient {
         } catch (e: Exception) {
             Log.e(TAG, "Exception uploadPreferences", e)
             wrapException("subir preferencias", e)
+        }
+    }
+
+    fun fetchAppUpdate(baseUrl: String): com.example.data.AppUpdate? {
+        if (isJsonBlob(baseUrl)) {
+            return fetchFullDatabase(baseUrl).appUpdate
+        }
+        val url = formatUrl(baseUrl, "appUpdate")
+        Log.d(TAG, "Fetching appUpdate from $url")
+        val request = Request.Builder().url(url).get().build()
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    if (response.code == 404) return null
+                    throwNetworkError(response.code, "obtener actualizacion de app")
+                }
+                val bodyString = response.body?.string() ?: return null
+                if (bodyString == "null") return null
+                return moshi.adapter(com.example.data.AppUpdate::class.java).fromJson(bodyString)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetchAppUpdate", e)
+            wrapException("obtener actualizacion de app", e)
+        }
+    }
+
+    fun uploadAppUpdate(baseUrl: String, appUpdate: com.example.data.AppUpdate): Boolean {
+        if (isJsonBlob(baseUrl)) {
+            val db = fetchFullDatabase(baseUrl)
+            val updated = db.copy(appUpdate = appUpdate)
+            return uploadFullDatabase(baseUrl, updated)
+        }
+        val url = formatUrl(baseUrl, "appUpdate")
+        Log.d(TAG, "Uploading appUpdate to $url")
+        try {
+            val json = moshi.adapter(com.example.data.AppUpdate::class.java).toJson(appUpdate)
+            val request = Request.Builder().url(url).put(json.toRequestBody(jsonMediaType)).build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throwNetworkError(response.code, "subir actualizacion de app")
+                }
+                return true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception uploadAppUpdate", e)
+            wrapException("subir actualizacion de app", e)
         }
     }
 

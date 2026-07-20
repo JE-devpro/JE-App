@@ -76,6 +76,7 @@ import com.example.data.EcoEnrollment
 import com.example.data.EcoNotification
 import com.example.ui.AppViewModel
 import com.example.ui.theme.MyApplicationTheme
+import com.example.ui.theme.GothamRounded
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.PickVisualMediaRequest
@@ -319,6 +320,7 @@ fun MainScreen(viewModel: AppViewModel) {
             currentVersionName = currentVersionName,
             currentVersionCode = currentVersionCode,
             isPreview = false,
+            isUserAdmin = (currentMember.email == "coordinador@je.org" || currentMember.isAdmin),
             onDismiss = { dismissUpdateDialogVersionCode = update.latestVersionCode }
         )
     }
@@ -653,83 +655,103 @@ fun MainScreen(viewModel: AppViewModel) {
                         end = innerPadding.calculateRightPadding(androidx.compose.ui.unit.LayoutDirection.Ltr)
                     )
             ) {
-                when (currentTab) {
-                    NavigationTab.ACTIVITIES -> {
-                        ActivitiesTab(
-                            activities = mappedActivitiesByEnrollment,
-                            isCoordinadorMode = isCoordinadorMode,
-                            memberName = currentMember.fullName,
-                            joinDate = currentMember.joinDate,
-                            memberPhotoUrl = currentMember.photoUri,
-                            onNavigateToCarnet = { currentTab = NavigationTab.CARNET },
-                            onToggleEnroll = { activity ->
-                                if (activity.isUserRegistered) {
-                                    activityForUnenrollConfirm = activity
-                                } else {
-                                    activityForEnrollConfirm = activity
+                AnimatedContent(
+                    targetState = currentTab,
+                    transitionSpec = {
+                        val slideSpec = tween<androidx.compose.ui.unit.IntOffset>(300, easing = FastOutSlowInEasing)
+                        val fadeSpec = tween<Float>(300, easing = FastOutSlowInEasing)
+                        
+                        if (targetState.ordinal > initialState.ordinal) {
+                            (slideInHorizontally(animationSpec = slideSpec) { width -> (width * 0.08f).toInt() } + fadeIn(animationSpec = fadeSpec)).togetherWith(
+                                slideOutHorizontally(animationSpec = slideSpec) { width -> -(width * 0.08f).toInt() } + fadeOut(animationSpec = fadeSpec)
+                            )
+                        } else {
+                            (slideInHorizontally(animationSpec = slideSpec) { width -> -(width * 0.08f).toInt() } + fadeIn(animationSpec = fadeSpec)).togetherWith(
+                                slideOutHorizontally(animationSpec = slideSpec) { width -> (width * 0.08f).toInt() } + fadeOut(animationSpec = fadeSpec)
+                            )
+                        }
+                    },
+                    label = "tabTransition",
+                    modifier = Modifier.fillMaxSize()
+                ) { targetTab ->
+                    when (targetTab) {
+                        NavigationTab.ACTIVITIES -> {
+                            ActivitiesTab(
+                                activities = mappedActivitiesByEnrollment,
+                                isCoordinadorMode = isCoordinadorMode,
+                                memberName = currentMember.fullName,
+                                joinDate = currentMember.joinDate,
+                                memberPhotoUrl = currentMember.photoUri,
+                                onNavigateToCarnet = { currentTab = NavigationTab.CARNET },
+                                onToggleEnroll = { activity ->
+                                    if (activity.isUserRegistered) {
+                                        activityForUnenrollConfirm = activity
+                                    } else {
+                                        activityForEnrollConfirm = activity
+                                    }
+                                },
+                                onDeleteActivity = { viewModel.deleteActivity(it) },
+                                onCardClick = { selectedActivityForDetail = it }
+                            )
+                        }
+                        NavigationTab.CALENDAR -> {
+                            CalendarTab(
+                                activities = mappedActivitiesByEnrollment,
+                                enrollments = enrollments,
+                                currentMember = currentMember,
+                                viewModel = viewModel,
+                                isCoordinadorMode = isCoordinadorMode,
+                                onToggleEnroll = { activity ->
+                                    if (activity.isUserRegistered) {
+                                        activityForUnenrollConfirm = activity
+                                    } else {
+                                        activityForEnrollConfirm = activity
+                                    }
+                                },
+                                onDeleteActivity = { viewModel.deleteActivity(it) },
+                                onCardClick = { selectedActivityForDetail = it }
+                            )
+                        }
+                        NavigationTab.CARNET -> {
+                            CarnetTab(
+                                profile = mappedProfile,
+                                isCoordinadorMode = isCoordinadorMode,
+                                onSaveProfile = { name, assoc, role, country, avatar ->
+                                    viewModel.saveProfile(name, assoc, role, country, avatar)
+                                },
+                                onUpdatePhoto = { photoUri ->
+                                    viewModel.updateProfilePhoto(photoUri)
+                                },
+                                onUpdateCustomCara1 = { uri ->
+                                    viewModel.updateProfileCustomCara1(uri)
+                                },
+                                onUpdateCustomCara2 = { uri ->
+                                    viewModel.updateProfileCustomCara2(uri)
                                 }
-                            },
-                            onDeleteActivity = { viewModel.deleteActivity(it) },
-                            onCardClick = { selectedActivityForDetail = it }
-                        )
-                    }
-                    NavigationTab.CALENDAR -> {
-                        CalendarTab(
-                            activities = mappedActivitiesByEnrollment,
-                            enrollments = enrollments,
-                            currentMember = currentMember,
-                            viewModel = viewModel,
-                            isCoordinadorMode = isCoordinadorMode,
-                            onToggleEnroll = { activity ->
-                                if (activity.isUserRegistered) {
-                                    activityForUnenrollConfirm = activity
-                                } else {
-                                    activityForEnrollConfirm = activity
-                                }
-                            },
-                            onDeleteActivity = { viewModel.deleteActivity(it) },
-                            onCardClick = { selectedActivityForDetail = it }
-                        )
-                    }
-                    NavigationTab.CARNET -> {
-                        CarnetTab(
-                            profile = mappedProfile,
-                            isCoordinadorMode = isCoordinadorMode,
-                            onSaveProfile = { name, assoc, role, country, avatar ->
-                                viewModel.saveProfile(name, assoc, role, country, avatar)
-                            },
-                            onUpdatePhoto = { photoUri ->
-                                viewModel.updateProfilePhoto(photoUri)
-                            },
-                            onUpdateCustomCara1 = { uri ->
-                                viewModel.updateProfileCustomCara1(uri)
-                            },
-                            onUpdateCustomCara2 = { uri ->
-                                viewModel.updateProfileCustomCara2(uri)
-                            }
-                        )
-                    }
-                    NavigationTab.FEED -> {
-                        FeedTab(
-                            articles = articles,
-                            viewModel = viewModel,
-                            isCoordinadorMode = isCoordinadorMode,
-                            onDeleteArticle = { viewModel.deleteArticle(it) },
-                            onPublishReportClick = { showAddReportDialog = true },
-                            onArticleClick = { selectedArticleForDetail = it }
-                        )
-                    }
-                    NavigationTab.ADMIN -> {
-                        AdminConsoleTab(
-                            currentMember = currentMember,
-                            viewModel = viewModel,
-                            members = members,
-                            enrollments = enrollments,
-                            notifications = notifications,
-                            activities = mappedActivitiesByEnrollment,
-                            googleCalendarLinked = googleCalendarLinked,
-                            onToggleGoogleCalendar = { viewModel.toggleGoogleCalendarLinked() }
-                        )
+                            )
+                        }
+                        NavigationTab.FEED -> {
+                            FeedTab(
+                                articles = articles,
+                                viewModel = viewModel,
+                                isCoordinadorMode = isCoordinadorMode,
+                                onDeleteArticle = { viewModel.deleteArticle(it) },
+                                onPublishReportClick = { showAddReportDialog = true },
+                                onArticleClick = { selectedArticleForDetail = it }
+                            )
+                        }
+                        NavigationTab.ADMIN -> {
+                            AdminConsoleTab(
+                                currentMember = currentMember,
+                                viewModel = viewModel,
+                                members = members,
+                                enrollments = enrollments,
+                                notifications = notifications,
+                                activities = mappedActivitiesByEnrollment,
+                                googleCalendarLinked = googleCalendarLinked,
+                                onToggleGoogleCalendar = { viewModel.toggleGoogleCalendarLinked() }
+                            )
+                        }
                     }
                 }
             }
@@ -777,7 +799,9 @@ fun MainScreen(viewModel: AppViewModel) {
                                         Text(
                                             text = tab.label,
                                             fontSize = 11.sp,
-                                            fontWeight = if (currentTab == tab) FontWeight.Bold else FontWeight.Medium
+                                            fontWeight = if (currentTab == tab) FontWeight.Bold else FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                         )
                                     },
                                     colors = NavigationBarItemDefaults.colors(
@@ -866,7 +890,7 @@ fun MainScreen(viewModel: AppViewModel) {
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = { activityForEnrollConfirm = null }) {
@@ -934,7 +958,7 @@ fun MainScreen(viewModel: AppViewModel) {
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
+                        horizontalArrangement = Arrangement.Center,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         TextButton(onClick = { activityForUnenrollConfirm = null }) {
@@ -1370,7 +1394,7 @@ fun ActivitiesTab(
                     targetValue = if (isSelected) {
                         if (cat.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     },
                     label = "textColor"
                 )
@@ -3714,7 +3738,7 @@ fun FeedTab(
                     targetValue = if (isSelected) {
                         if (cat.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
                     } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                     },
                     label = "newsTextColor"
                 )
@@ -5297,7 +5321,7 @@ fun CalendarTab(
                         targetValue = if (isSelected) {
                             if (filter.lowercase() == "todos") MaterialTheme.colorScheme.onPrimary else Color.White
                         } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
+                            MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         },
                         label = "calendarChipText"
                     )
@@ -5935,314 +5959,252 @@ fun LoginScreen(viewModel: AppViewModel) {
     val loginUiState by viewModel.loginUiState.collectAsStateWithLifecycle()
     val isLoading = loginUiState is AppViewModel.LoginUiState.Loading
 
-    val forestDarkGreen = Color(0xFF253013)
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                brush = Brush.verticalGradient(
-                    0.0f to Color(0xFF000000),
-                    0.15f to Color(0xFF000000),      
-                    0.60f to forestDarkGreen,
-                    1.0f to forestDarkGreen
-                )
-            ),
-        contentAlignment = Alignment.Center
+            .background(Color(0xFFF4F5F2))
     ) {
+        // Large background clover shapes at the bottom-right corner to match reference design
+        Image(
+            painter = painterResource(id = R.drawable.esquinero),
+            contentDescription = null,
+            modifier = Modifier
+                .size(width = 900.dp, height = 1300.dp)
+                .align(Alignment.BottomEnd)
+                .offset(x = 180.dp, y = 240.dp),
+            colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFF394931).copy(alpha = 0.45f))
+        )
+
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 20.dp),
+                .padding(horizontal = 32.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.weight(1f))
 
-            // Logo drawn dynamically matching the clover style
-            LeafLogo(
-                modifier = Modifier.size(115.dp),
-                color = null // Preserves the original colors of your PNG
-            )
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.Start
+            ) {
+                // Title "BIENVENIDO"
+                Text(
+                    text = "BIENVENIDO",
+                    fontSize = 36.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF394931),
+                    fontFamily = GothamRounded,
+                    letterSpacing = 1.sp,
+                    textAlign = TextAlign.Start
+                )
 
-            // Extremely close to the logo using offset pulling
-            Text(
-                text = "BIENVENIDO",
-                fontSize = 30.sp,
-                fontWeight = FontWeight.Black,
-                color = Color.White,
-                letterSpacing = 2.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.offset(y = (-10).dp)
-            )
+                // Subtitle with inline clover leaf icon
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Start,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 32.dp)
+                ) {
+                    Text(
+                        text = "Inicia sesión con tu",
+                        color = Color(0xFF394931).copy(alpha = 0.8f),
+                        fontFamily = GothamRounded,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_clover),
+                        contentDescription = "Clover",
+                        modifier = Modifier
+                            .size(38.dp)
+                            .offset(x = (-6).dp),
+                        colorFilter = androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFF394931))
+                    )
+                    Text(
+                        text = "ID para continuar",
+                        color = Color(0xFF394931).copy(alpha = 0.8f),
+                        fontFamily = GothamRounded,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Normal,
+                        modifier = Modifier.offset(x = (-16).dp)
+                    )
+                }
+            }
 
-            Text(
-                text = "INICIA SESIÓN PARA CONTINUAR",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF6B7B61),
-                letterSpacing = 1.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.offset(y = (-10).dp)
+            // Email Input Field
+            OutlinedTextField(
+                value = email,
+                onValueChange = { 
+                    email = it
+                    loginError = false
+                    viewModel.resetLoginUiState()
+                },
+                enabled = !isLoading,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Email,
+                        contentDescription = null,
+                        tint = Color(0xFF394931).copy(alpha = 0.8f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                placeholder = {
+                    Text(
+                        text = "Correo electrónico",
+                        color = Color(0xFF394931).copy(alpha = 0.5f),
+                        fontFamily = GothamRounded,
+                        fontSize = 15.sp
+                    )
+                },
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontFamily = GothamRounded,
+                    fontSize = 15.sp
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("email_input"),
+                singleLine = true,
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF394931),
+                    unfocusedTextColor = Color(0xFF394931),
+                    focusedContainerColor = Color.White.copy(alpha = 0.6f),
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.6f),
+                    focusedBorderColor = Color(0xFF394931).copy(alpha = 0.85f),
+                    unfocusedBorderColor = Color(0xFF394931).copy(alpha = 0.65f),
+                    cursorColor = Color(0xFF394931),
+                    disabledTextColor = Color(0xFF394931).copy(alpha = 0.5f),
+                    disabledBorderColor = Color(0xFF394931).copy(alpha = 0.5f)
+                )
             )
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Core Custom Card
-            Card(
+            // Password Input Field
+            var passwordVisibility by remember { mutableStateOf(false) }
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = { 
+                    password = it
+                    loginError = false
+                    viewModel.resetLoginUiState()
+                },
+                enabled = !isLoading,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Outlined.Lock,
+                        contentDescription = null,
+                        tint = Color(0xFF394931).copy(alpha = 0.8f),
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                trailingIcon = {
+                    val visibilityIcon = if (passwordVisibility) Icons.Default.Visibility else Icons.Default.VisibilityOff
+                    IconButton(onClick = { passwordVisibility = !passwordVisibility }) {
+                        Icon(
+                            imageVector = visibilityIcon,
+                            contentDescription = null,
+                            tint = Color(0xFF394931).copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                },
+                placeholder = {
+                    Text(
+                        text = "Contraseña",
+                        color = Color(0xFF394931).copy(alpha = 0.5f),
+                        fontFamily = GothamRounded,
+                        fontSize = 15.sp
+                    )
+                },
+                textStyle = androidx.compose.ui.text.TextStyle(
+                    fontFamily = GothamRounded,
+                    fontSize = 15.sp
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .testTag("login_card")
-                    .drawBehind {
-                        val cardSize = this@drawBehind.size
-                        
-                        // 1. Soft Outward Shadow with strokes to prevent filling internal card background
-                        val shadowColor = Color.Black.copy(alpha = 0.08f)
-                        for (i in 1..8) {
-                            val spread = (i * 1.5f).dp.toPx()
-                            drawRoundRect(
-                                color = shadowColor,
-                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread + 3f),
-                                size = androidx.compose.ui.geometry.Size(cardSize.width + spread * 2, cardSize.height + spread * 2),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx() + spread),
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.dp.toPx())
-                            )
+                    .testTag("password_input"),
+                singleLine = true,
+                visualTransformation = if (passwordVisibility) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                shape = RoundedCornerShape(18.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color(0xFF394931),
+                    unfocusedTextColor = Color(0xFF394931),
+                    focusedContainerColor = Color.White.copy(alpha = 0.6f),
+                    unfocusedContainerColor = Color.White.copy(alpha = 0.6f),
+                    focusedBorderColor = Color(0xFF394931).copy(alpha = 0.85f),
+                    unfocusedBorderColor = Color(0xFF394931).copy(alpha = 0.65f),
+                    cursorColor = Color(0xFF394931),
+                    disabledTextColor = Color(0xFF394931).copy(alpha = 0.5f),
+                    disabledBorderColor = Color(0xFF394931).copy(alpha = 0.5f)
+                )
+            )
+
+            if (loginError || loginUiState is AppViewModel.LoginUiState.Error) {
+                val errorMessage = (loginUiState as? AppViewModel.LoginUiState.Error)?.message 
+                    ?: "Credenciales incorrectas. Verifique correo y contraseña."
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = errorMessage,
+                    color = MaterialTheme.colorScheme.error,
+                    fontFamily = GothamRounded,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            // Remember Me Checkbox (styled exactly like reference)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp)
+                    .clickable(
+                        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                        indication = null
+                    ) {
+                        if (!isLoading) {
+                            rememberMe = !rememberMe 
                         }
-                        
-                        // 2. Outward Green Glow with strokes to maintain brilliant border accent and zero interior color
-                        val glowColor = Color(0xFF5D7157).copy(alpha = 0.04f)
-                        for (i in 1..12) {
-                            val spread = (i * 2.0f).dp.toPx()
-                            drawRoundRect(
-                                color = glowColor,
-                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
-                                size = androidx.compose.ui.geometry.Size(cardSize.width + spread * 2, cardSize.height + spread * 2),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(20.dp.toPx() + spread),
-                                style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.5.dp.toPx())
-                            )
-                        }
-                    },
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Transparent
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF5D7157)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    }
             ) {
-                Column(
-                    modifier = Modifier.padding(22.dp)
+                Box(
+                    modifier = Modifier
+                        .size(20.dp)
+                        .border(1.5.dp, Color(0xFF394931).copy(alpha = 0.8f), RoundedCornerShape(4.dp))
+                        .background(
+                            if (rememberMe) Color(0xFF394931) else Color.Transparent,
+                            RoundedCornerShape(4.dp)
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    // ID Indicator Line Group
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(80.dp)
-                            .offset(y = (-14).dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f),
-                            color = Color.White.copy(alpha = 0.35f),
-                            thickness = 1.dp
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Image(
-                            painter = painterResource(id = R.drawable.ic_clover_id),
-                            contentDescription = "ID Label Logo",
-                            modifier = Modifier.size(width = 125.dp, height = 98.dp),
-                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        HorizontalDivider(
-                            modifier = Modifier.weight(1f),
-                            color = Color.White.copy(alpha = 0.35f),
-                            thickness = 1.dp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(2.dp))
-
-                    Text(
-                        text = "CORREO ELECTRÓNICO",
-                        color = Color(0xFFB0B59E),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    OutlinedTextField(
-                        value = email,
-                        onValueChange = { 
-                            email = it
-                            loginError = false
-                            viewModel.resetLoginUiState()
-                        },
-                        enabled = !isLoading,
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Email,
-                                contentDescription = null,
-                                tint = Color(0xFF91A37E),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("email_input"),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedBorderColor = Color(0xFF5E7955),
-                            unfocusedBorderColor = Color(0xFF324A2D),
-                            cursorColor = Color(0xFF91A37E),
-                            disabledTextColor = Color.White.copy(alpha = 0.5f),
-                            disabledBorderColor = Color(0xFF324A2D).copy(alpha = 0.5f)
-                        )
-                    )
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    Text(
-                        text = "CONTRASEÑA",
-                        color = Color(0xFFB0B59E),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    var passwordVisibility by remember { mutableStateOf(false) }
-
-                    OutlinedTextField(
-                        value = password,
-                        onValueChange = { 
-                            password = it
-                            loginError = false
-                            viewModel.resetLoginUiState()
-                        },
-                        enabled = !isLoading,
-                        leadingIcon = {
-                            Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = null,
-                                tint = Color(0xFF91A37E),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        },
-                        trailingIcon = {
-                            val visibilityIcon = if (passwordVisibility) Icons.Default.Visibility else Icons.Default.VisibilityOff
-                            IconButton(onClick = { passwordVisibility = !passwordVisibility }) {
-                                Icon(
-                                    imageVector = visibilityIcon,
-                                    contentDescription = null,
-                                    tint = Color(0xFF91A37E),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("password_input"),
-                        singleLine = true,
-                        visualTransformation = if (passwordVisibility) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
-                            focusedContainerColor = Color.Transparent,
-                            unfocusedContainerColor = Color.Transparent,
-                            focusedBorderColor = Color(0xFF5E7955),
-                            unfocusedBorderColor = Color(0xFF324A2D),
-                            cursorColor = Color(0xFF91A37E),
-                            disabledTextColor = Color.White.copy(alpha = 0.5f),
-                            disabledBorderColor = Color(0xFF324A2D).copy(alpha = 0.5f)
-                        )
-                    )
-
-                    if (loginError || loginUiState is AppViewModel.LoginUiState.Error) {
-                        val errorMessage = (loginUiState as? AppViewModel.LoginUiState.Error)?.message 
-                            ?: "Credenciales incorrectas. Verifique correo y contraseña."
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = errorMessage,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(20.dp))
-
-                    // Remember Me and Forgot Password Action Bar
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.clickable { 
-                                if (!isLoading) {
-                                    rememberMe = !rememberMe 
-                                }
-                            }
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .border(1.2.dp, Color(0xFF2B3D26), RoundedCornerShape(4.dp))
-                                    .background(
-                                        if (rememberMe) Color(0xFF1B2A17) else Color.Transparent,
-                                        RoundedCornerShape(4.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (rememberMe) {
-                                    Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = Color(0xFF91A37E),
-                                        modifier = Modifier.size(11.dp)
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = "RECUÉRDAME",
-                                color = Color(0xFFB0B59E),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Text(
-                            text = "OLVIDÉ MI CONTRASEÑA",
-                            color = Color(0xFFB0B59E),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier
-                                .testTag("forgot_password_button")
-                                .clickable { 
-                                    if (!isLoading) {
-                                        showForgotDialog = true 
-                                    }
-                                }
+                    if (rememberMe) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(13.dp)
                         )
                     }
                 }
+                Spacer(modifier = Modifier.width(10.dp))
+                Text(
+                    text = "Recordarme",
+                    color = Color(0xFF394931).copy(alpha = 0.7f),
+                    fontFamily = GothamRounded,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Normal
+                )
             }
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // Iniciar Sesion Action Button
+            // Login Action Button (styled exactly like reference)
             Button(
                 onClick = {
                     if (email.isNotBlank() && password.isNotBlank()) {
@@ -6257,29 +6219,14 @@ fun LoginScreen(viewModel: AppViewModel) {
                 },
                 enabled = !isLoading,
                 modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .height(52.dp)
-                    .testTag("login_button")
-                    .drawBehind {
-                        val btnSize = this@drawBehind.size
-                        // Soft glow around the entire rounded rectangle button - very subtle intensity
-                        val glowColor = Color(0xFF5D7157).copy(alpha = 0.02f)
-                        for (i in 1..5) {
-                            val spread = (i * 2.0f).dp.toPx()
-                            drawRoundRect(
-                                color = glowColor,
-                                topLeft = androidx.compose.ui.geometry.Offset(-spread, -spread),
-                                size = androidx.compose.ui.geometry.Size(btnSize.width + spread * 2, btnSize.height + spread * 2),
-                                cornerRadius = androidx.compose.ui.geometry.CornerRadius(14.dp.toPx() + spread, 14.dp.toPx() + spread)
-                            )
-                        }
-                    },
-                shape = RoundedCornerShape(14.dp),
+                    .fillMaxWidth()
+                    .height(54.dp)
+                    .testTag("login_button"),
+                shape = RoundedCornerShape(18.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF45503F),
-                    disabledContainerColor = Color(0xFF323B2F)
-                ),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF5D6B56))
+                    containerColor = Color(0xFF394931),
+                    disabledContainerColor = Color(0xFF394931).copy(alpha = 0.6f)
+                )
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -6287,65 +6234,100 @@ fun LoginScreen(viewModel: AppViewModel) {
                 ) {
                     if (isLoading) {
                         CircularProgressIndicator(
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                            modifier = Modifier.size(20.dp)
+                             color = Color.White,
+                             strokeWidth = 2.dp,
+                             modifier = Modifier.size(20.dp)
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Text(
                             text = "AUTENTICANDO...",
-                            fontSize = 14.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
+                            fontFamily = GothamRounded,
                             color = Color.White.copy(alpha = 0.8f),
                             letterSpacing = 1.sp
                         )
                     } else {
                         Text(
                             text = "INICIAR SESIÓN",
-                            fontSize = 14.sp,
+                            fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
+                            fontFamily = GothamRounded,
                             color = Color.White,
                             letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
                         )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Seed Account Panel
-            Card(
-                modifier = Modifier.fillMaxWidth(0.95f),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF070B06).copy(alpha = 0.6f)),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1B2817).copy(alpha = 0.5f))
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text(
-                        text = "CUENTAS DE DEMOSTRACIÓN AUTORIZADAS:",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF6B7B61),
-                        letterSpacing = 0.5.sp
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "• Director: coordinador@je.org / JE2026\n• Miembro RAM: miembro2@je.org / miembro2\n• Miembro Salud: miembro3@je.org / miembro3",
-                        fontSize = 10.sp,
-                        color = Color(0xFF6B7B61).copy(alpha = 0.75f),
-                        lineHeight = 14.sp
-                    )
+            // Forgot password link (styled exactly like reference)
+            Text(
+                text = "¿Olvidaste tu contraseña?",
+                color = Color(0xFF394931).copy(alpha = 0.7f),
+                fontFamily = GothamRounded,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Normal,
+                textAlign = TextAlign.Center,
+                modifier = Modifier
+                    .align(Alignment.CenterHorizontally)
+                    .testTag("forgot_password_button")
+                    .clickable { 
+                        if (!isLoading) {
+                            showForgotDialog = true 
+                        }
+                    }
+                    .padding(vertical = 12.dp)
+            )
+
+            // Dynamic Collapsible Seed Account Panel
+            var showDemoCredentials by remember { mutableStateOf(false) }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Text(
+                text = if (showDemoCredentials) "Ocultar cuentas demo ▲" else "Ver cuentas de demostración ▼",
+                color = Color(0xFF394931).copy(alpha = 0.6f),
+                fontFamily = GothamRounded,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clickable { showDemoCredentials = !showDemoCredentials }
+                    .padding(8.dp)
+            )
+
+            AnimatedVisibility(visible = showDemoCredentials) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF394931).copy(alpha = 0.05f)),
+                    border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFF394931).copy(alpha = 0.2f))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Text(
+                            text = "CUENTAS DE DEMOSTRACIÓN AUTORIZADAS:",
+                            fontFamily = GothamRounded,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF394931),
+                            letterSpacing = 0.5.sp
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = "• Director: coordinador@je.org / JE2026\n• Miembro RAM: miembro2@je.org / miembro2\n• Miembro Salud: miembro3@je.org / miembro3",
+                            fontFamily = GothamRounded,
+                            fontSize = 10.sp,
+                            color = Color(0xFF394931).copy(alpha = 0.8f),
+                            lineHeight = 14.sp
+                        )
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
+            Spacer(modifier = Modifier.weight(1f))
         }
     }
 
@@ -6670,7 +6652,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                 val contentColor = if (isSelected) {
                     MaterialTheme.colorScheme.onPrimaryContainer
                 } else {
-                    MaterialTheme.colorScheme.onSurfaceVariant
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                 }
                 val borderColor = if (isSelected) {
                     MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
@@ -8486,10 +8468,10 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(12.dp),
-                            verticalAlignment = Alignment.Top,
+                            verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier.padding(bottom = 6.dp)
@@ -8629,36 +8611,61 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
                                 )
                             }
                             
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                IconButton(
-                                    onClick = { viewModel.toggleNotificationReadStatus(alert) },
+                                Box(
                                     modifier = Modifier
                                         .size(34.dp)
-                                        .background(
-                                            color = if (alert.isRead) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.1f)
-                                            else MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+                                        .border(
+                                            width = 1.dp,
+                                            color = if (alert.isRead) {
+                                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                                            } else {
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+                                            },
                                             shape = RoundedCornerShape(8.dp)
                                         )
+                                        .background(
+                                            color = if (alert.isRead) {
+                                                Color.Transparent
+                                            } else {
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                            },
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { viewModel.toggleNotificationReadStatus(alert) },
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = if (alert.isRead) Icons.Default.NotificationsNone else Icons.Default.Check,
                                         contentDescription = if (alert.isRead) "Marcar como no leído" else "Marcar como leído",
-                                        tint = if (alert.isRead) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f) else MaterialTheme.colorScheme.primary,
+                                        tint = if (alert.isRead) {
+                                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                        } else {
+                                            MaterialTheme.colorScheme.primary
+                                        },
                                         modifier = Modifier.size(16.dp)
                                     )
                                 }
 
-                                IconButton(
-                                    onClick = { viewModel.clearNotification(alert.id) },
+                                Box(
                                     modifier = Modifier
                                         .size(34.dp)
-                                        .background(
-                                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.15f),
+                                        .border(
+                                            width = 1.dp,
+                                            color = MaterialTheme.colorScheme.error.copy(alpha = 0.35f),
                                             shape = RoundedCornerShape(8.dp)
                                         )
+                                        .background(
+                                            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.1f),
+                                            shape = RoundedCornerShape(8.dp)
+                                        )
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { viewModel.clearNotification(alert.id) },
+                                    contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Delete,
@@ -10181,39 +10188,41 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                 }
 
                 Text(
-                    text = "Configura y previsualiza las notificaciones de actualización para todos los miembros de Jóvenes y Ecosistemas.",
+                    text = "Configura y publica las notificaciones de actualización de forma instantánea para todos los miembros de Jóvenes y Ecosistemas.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
                     lineHeight = 16.sp
                 )
 
-                val updateUrl by viewModel.updateJsonUrl.collectAsStateWithLifecycle()
-                var editUpdateUrl by remember(updateUrl) { mutableStateOf(updateUrl) }
-
-                OutlinedTextField(
-                    value = editUpdateUrl,
-                    onValueChange = {
-                        editUpdateUrl = it
-                        viewModel.updateUpdateJsonUrl(it)
-                    },
-                    label = { Text("URL del archivo version.json (GitHub)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.05f)),
                     shape = RoundedCornerShape(12.dp),
-                    trailingIcon = {
-                        IconButton(onClick = { 
-                            viewModel.checkForUpdates()
-                            Toast.makeText(context, "Consultando archivo JSON remoto...", Toast.LENGTH_SHORT).show()
-                        }) {
-                            Icon(Icons.Default.Refresh, contentDescription = "Sincronizar URL")
-                        }
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "La actualización se guardará en tu Base de Datos en la Nube. Todos los usuarios recibirán el aviso inmediatamente al iniciar la app.",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            lineHeight = 15.sp
+                        )
                     }
-                )
+                }
 
                 Divider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
 
                 Text(
-                    text = "Valores de Simulación para Previsualización",
+                    text = "Valores de la Actualización",
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary
@@ -10222,7 +10231,7 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                 var previewVerName by remember { mutableStateOf("2.6") }
                 var previewVerCode by remember { mutableStateOf("26") }
                 var previewUrl by remember { mutableStateOf("https://github.com/davicholeon67/jovenes-ecosistemas/releases") }
-                var previewNotes by remember { mutableStateOf("• Correcciones críticas en la sincronización local y en la nube\n• Rediseño completo de la consola de administración en el módulo Nube\n• Nuevo previsualizador interactivo de actualizaciones obligatorias") }
+                var previewNotes by remember { mutableStateOf("• Correcciones críticas en la sincronización local y en la nube\n• Rediseño completo de la consola de administración en el módulo Nube") }
                 var previewMandatory by remember { mutableStateOf(false) }
 
                 val liveUpdate = appUpdateState
@@ -10234,7 +10243,7 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                             previewUrl = liveUpdate.downloadUrl
                             previewNotes = liveUpdate.releaseNotes
                             previewMandatory = liveUpdate.minRequiredVersionCode > currentVersionCode
-                            Toast.makeText(context, "Campos precompletados con datos del JSON remoto.", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "Campos precompletados con datos reales actuales.", Toast.LENGTH_SHORT).show()
                         },
                         colors = ButtonDefaults.outlinedButtonColors().copy(
                             contentColor = MaterialTheme.colorScheme.primary
@@ -10245,7 +10254,7 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Cargar datos reales del JSON remoto", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Cargar datos reales actuales", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
@@ -10319,18 +10328,53 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
 
                 var showPreviewDialog by remember { mutableStateOf(false) }
 
-                Button(
-                    onClick = { showPreviewDialog = true },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Previsualizar Alerta de Actualización", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Button(
+                        onClick = { showPreviewDialog = true },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Previsualizar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Button(
+                        onClick = {
+                            val code = previewVerCode.toIntOrNull() ?: 26
+                            val minCode = if (previewMandatory) (currentVersionCode + 1) else 0
+                            val updateData = com.example.data.AppUpdate(
+                                latestVersionCode = code,
+                                latestVersionName = previewVerName,
+                                downloadUrl = previewUrl,
+                                releaseNotes = previewNotes,
+                                minRequiredVersionCode = minCode
+                            )
+                            viewModel.publishAppUpdateToCloud(
+                                update = updateData,
+                                onSuccess = {
+                                    Toast.makeText(context, "¡Actualización publicada en la Nube! 🚀", Toast.LENGTH_LONG).show()
+                                },
+                                onFailure = { err ->
+                                    Toast.makeText(context, "Error: $err", Toast.LENGTH_LONG).show()
+                                }
+                            )
+                        },
+                        modifier = Modifier.weight(1.2f),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Publicar Nube", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
 
                 if (showPreviewDialog) {
@@ -11624,10 +11668,11 @@ fun AppUpdateDialog(
     currentVersionName: String,
     currentVersionCode: Int,
     isPreview: Boolean = false,
+    isUserAdmin: Boolean = false,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
-    val isForceUpdate = update.minRequiredVersionCode > currentVersionCode && !isPreview
+    val isForceUpdate = update.minRequiredVersionCode > currentVersionCode && !isPreview && !isUserAdmin
     
     androidx.compose.ui.window.Dialog(
         onDismissRequest = { if (!isForceUpdate) onDismiss() }
@@ -11660,7 +11705,7 @@ fun AppUpdateDialog(
                 }
 
                 Text(
-                    text = if (isPreview) "Previsualización: Actualización 🌿" else "Actualización Disponible 🌿",
+                    text = if (isPreview) "Previsualización: Actualización" else "Actualización Disponible",
                     fontSize = 20.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -11699,16 +11744,6 @@ fun AppUpdateDialog(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                }
-
-                if (isPreview) {
-                    Text(
-                        text = if (update.minRequiredVersionCode > currentVersionCode) "⚠️ Esta actualización está configurada como OBLIGATORIA." else "ℹ️ Esta actualización está configurada como OPCIONAL.",
-                        fontSize = 11.sp,
-                        color = if (update.minRequiredVersionCode > currentVersionCode) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
                 }
 
                 Row(
