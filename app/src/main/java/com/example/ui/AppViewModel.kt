@@ -2362,6 +2362,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 fullMessageBuilder.append("--- DETALLE DEL BUG ---\n")
                 fullMessageBuilder.append(comment)
 
+                com.example.util.CrashlyticsManager.log("Reporte de bug enviado por usuario: $comment")
+                com.example.util.CrashlyticsManager.recordException(
+                    RuntimeException("Bug reportado por usuario: $comment"),
+                    "Reporte de Bug enviado a Firebase Crashlytics"
+                )
+
                 val newNotification = EcoNotification(
                     title = "🐛 Bug: ${if (comment.length > 25) comment.take(22).trim() + "..." else comment}",
                     message = fullMessageBuilder.toString(),
@@ -2382,6 +2388,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             } catch (e: Exception) {
                 e.printStackTrace()
+                com.example.util.CrashlyticsManager.recordException(e, "Error al procesar el reporte de bug")
                 launch(Dispatchers.Main) {
                     onError(e.localizedMessage ?: "Error al procesar el reporte de bug en las alertas")
                 }

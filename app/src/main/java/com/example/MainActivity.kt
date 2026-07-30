@@ -176,6 +176,7 @@ class MainActivity : ComponentActivity() {
 
         // Inicializar Firebase Helper para autenticación y base de datos en nube
         com.example.data.api.FirebaseHelper.init(applicationContext)
+        com.example.util.CrashlyticsManager.initCloudSync()
 
         // Solicitar permiso de notificaciones para Android 13+ (API 33+) en el inicio de la app
         if (Build.VERSION.SDK_INT >= 33) {
@@ -8292,9 +8293,129 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
     }
     var activeScreenshotUri by remember { mutableStateOf<String?>(null) }
     var showCreateGlobalAlertDialog by remember { mutableStateOf(false) }
+    var alertsSubTab by remember { mutableStateOf("Alertas") }
+    val unreadAlertsCount = notifications.count { !it.isRead }
+    val capturedLogs by com.example.util.CrashlyticsManager.capturedLogs.collectAsStateWithLifecycle()
 
     Column(modifier = Modifier.fillMaxSize()) {
-        Card(
+        // Unified Segmented Navigation Bar
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.12f)
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(4.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                // Tab 1: Alertas
+                val isAlertsSelected = alertsSubTab == "Alertas"
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { alertsSubTab = "Alertas" },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isAlertsSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    shadowElevation = if (isAlertsSelected) 2.dp else 0.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 9.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Notifications,
+                            contentDescription = null,
+                            tint = if (isAlertsSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Buzón Alertas",
+                            fontSize = 12.sp,
+                            fontWeight = if (isAlertsSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isAlertsSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                        )
+                        if (unreadAlertsCount > 0) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isAlertsSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.error
+                            ) {
+                                Text(
+                                    text = "$unreadAlertsCount",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isAlertsSelected) MaterialTheme.colorScheme.onPrimary else Color.White,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Tab 2: Crashlytics
+                val isCrashSelected = alertsSubTab == "Crashlytics"
+                Surface(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { alertsSubTab = "Crashlytics" },
+                    shape = RoundedCornerShape(12.dp),
+                    color = if (isCrashSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    shadowElevation = if (isCrashSelected) 2.dp else 0.dp
+                ) {
+                    Row(
+                        modifier = Modifier.padding(vertical = 9.dp, horizontal = 10.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BugReport,
+                            contentDescription = null,
+                            tint = if (isCrashSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Crashlytics",
+                            fontSize = 12.sp,
+                            fontWeight = if (isCrashSelected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (isCrashSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+                        )
+                        if (capturedLogs.isNotEmpty()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isCrashSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f) else MaterialTheme.colorScheme.errorContainer
+                            ) {
+                                Text(
+                                    text = "${capturedLogs.size}",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isCrashSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (alertsSubTab == "Crashlytics") {
+            AdminCrashlyticsPanel(viewModel = viewModel)
+        } else {
+            Card(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(bottom = 12.dp),
@@ -8681,6 +8802,7 @@ fun AdminAlertsPanel(viewModel: AppViewModel, notifications: List<EcoNotificatio
             }
         }
     }
+}
 
     // Full screen expandable screenshot lightbox dialog
     if (activeScreenshotUri != null) {
@@ -11831,6 +11953,450 @@ fun AppUpdateDialog(
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                     ) {
                         Text("Descargar", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminCrashlyticsPanel(viewModel: AppViewModel) {
+    val context = LocalContext.current
+    val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
+    val isDark = when (prefTheme) {
+        "light" -> false
+        "dark" -> true
+        else -> androidx.compose.foundation.isSystemInDarkTheme()
+    }
+    val capturedLogs by com.example.util.CrashlyticsManager.capturedLogs.collectAsStateWithLifecycle()
+    val isCollectionEnabled by com.example.util.CrashlyticsManager.isCollectionEnabled.collectAsStateWithLifecycle()
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 96.dp)
+    ) {
+        // Main Telemetry Status Header Card adhering strictly to MaterialTheme palette
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isCollectionEnabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                    else MaterialTheme.colorScheme.outline.copy(alpha = 0.15f)
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    // Header Top Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Surface(
+                                shape = CircleShape,
+                                color = if (isCollectionEnabled) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer,
+                                modifier = Modifier.size(42.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.BugReport,
+                                        contentDescription = null,
+                                        tint = if (isCollectionEnabled) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Firebase Crashlytics",
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    // Status Indicator Dot
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = if (isCollectionEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.size(8.dp)
+                                    ) {}
+                                }
+                                Text(
+                                    text = if (isCollectionEnabled) "Telemetría & Diagnóstico Activo" else "Recopilación en Pausa",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isCollectionEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                                )
+                            }
+                        }
+
+                        Switch(
+                            checked = isCollectionEnabled,
+                            onCheckedChange = { enabled ->
+                                com.example.util.CrashlyticsManager.setCollectionEnabled(enabled)
+                                Toast.makeText(
+                                    context,
+                                    if (enabled) "Crashlytics activado" else "Crashlytics desactivado",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Metric Cards Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Metric 1: Estado
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "ESTADO",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = if (isCollectionEnabled) "ONLINE" else "OFFLINE",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = if (isCollectionEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
+                                )
+                            }
+                        }
+
+                        // Metric 2: Registros
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "REGISTROS",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "${capturedLogs.size}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        // Metric 3: SDK Engine
+                        Surface(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "FIREBASE",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "v33.0.0",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // Action Buttons Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val msg = com.example.util.CrashlyticsManager.triggerTestCrash()
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer,
+                                contentColor = MaterialTheme.colorScheme.onErrorContainer
+                            ),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Simular Error", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                com.example.util.CrashlyticsManager.clearLocalLogs()
+                                Toast.makeText(context, "Historial de registros limpiado", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f).height(38.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.DeleteSweep,
+                                contentDescription = null,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Limpiar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section Title
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "HISTORIAL DE ERRORES CAPTURADOS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp
+                )
+                Text(
+                    text = "${capturedLogs.size} evento(s)",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        if (capturedLogs.isEmpty()) {
+            item {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.08f))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 32.dp, horizontal = 16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                modifier = Modifier.size(56.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Default.CheckCircle,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = "No se han reportado errores",
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "No se han detectado cierres ni excepciones no controladas. Firebase Crashlytics monitorea activamente la aplicación.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            items(capturedLogs) { logEntry ->
+                var isExpanded by remember { mutableStateOf(false) }
+                val timeStr = java.text.SimpleDateFormat("HH:mm:ss · dd/MM", java.util.Locale.getDefault())
+                    .format(java.util.Date(logEntry.timestamp))
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isExpanded = !isExpanded },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (logEntry.exceptionType != null) {
+                            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                        }
+                    ),
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (logEntry.exceptionType != null) MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+                        else MaterialTheme.colorScheme.outline.copy(alpha = 0.1f)
+                    )
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = if (logEntry.exceptionType != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(end = 8.dp)
+                                ) {
+                                    Text(
+                                        text = logEntry.tag,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (logEntry.exceptionType != null) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                                if (logEntry.exceptionType != null) {
+                                    Text(
+                                        text = logEntry.exceptionType,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            }
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = timeStr,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(
+                                    imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = logEntry.message,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            lineHeight = 17.sp
+                        )
+
+                        if (isExpanded && !logEntry.stackTraceSnippet.isNullOrBlank()) {
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "TRAZA DEL ERROR (STACKTRACE):",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                            val clip = android.content.ClipData.newPlainText("Crashlytics StackTrace", logEntry.stackTraceSnippet)
+                                            clipboard.setPrimaryClip(clip)
+                                            Toast.makeText(context, "Traza copiada al portapapeles", Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.ContentCopy,
+                                            contentDescription = "Copiar Traza",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        text = logEntry.stackTraceSnippet,
+                                        fontSize = 10.sp,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                        color = MaterialTheme.colorScheme.error,
+                                        lineHeight = 14.sp,
+                                        modifier = Modifier.padding(10.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
