@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import kotlinx.coroutines.launch
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.foundation.Image
 import androidx.compose.ui.res.painterResource
@@ -839,7 +840,6 @@ fun MainScreen(viewModel: AppViewModel) {
             onSaveClick = { updated ->
                 viewModel.updateActivity(updated)
                 selectedActivityForEdit = null
-                viewModel.autoSync()
             }
         )
     }
@@ -2540,7 +2540,8 @@ fun AddActivityDialog(
                             if (title.isNotBlank() && desc.isNotBlank()) {
                                 val finalLoc = if (isVirtual) {
                                     val platform = loc.ifBlank { "Virtual" }
-                                    if (virtualLink.isNotBlank()) "$platform - Enlace: $virtualLink" else platform
+                                    val platformWithVirtual = if (platform.lowercase().contains("virtual")) platform else "$platform (Virtual)"
+                                    if (virtualLink.isNotBlank()) "$platformWithVirtual - Enlace: $virtualLink" else platformWithVirtual
                                 } else {
                                     loc.ifBlank { "Presencial" }
                                 }
@@ -4940,9 +4941,28 @@ fun triggerPushNotification(context: Context, activityTitle: String, activityDat
         android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
     )
 
+    val largeIconBitmap = try {
+        val original = android.graphics.BitmapFactory.decodeResource(context.resources, com.example.R.drawable.ic_clover)
+        if (original != null) {
+            val output = android.graphics.Bitmap.createBitmap(original.width, original.height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(output)
+            val paint = android.graphics.Paint().apply { isAntiAlias = true }
+            val rect = android.graphics.Rect(0, 0, original.width, original.height)
+            canvas.drawARGB(0, 0, 0, 0)
+            paint.color = 0xff424242.toInt()
+            val radius = if (original.width < original.height) original.width / 2f else original.height / 2f
+            canvas.drawCircle(original.width / 2f, original.height / 2f, radius, paint)
+            paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+            canvas.drawBitmap(original, rect, rect, paint)
+            output
+        } else null
+    } catch (e: Exception) {
+        null
+    }
+
     val builder = NotificationCompat.Builder(context, channelId)
-        .setSmallIcon(com.example.R.mipmap.ic_launcher)
-        .setContentTitle("Recordatorio de Evento 🌿")
+        .setSmallIcon(com.example.R.drawable.ic_notification_clover)
+        .setContentTitle("Recordatorio de Evento")
         .setContentText("Tienes una actividad programada: $activityTitle para la fecha $activityDate.")
         .setStyle(NotificationCompat.BigTextStyle().bigText("Tienes una actividad programada: $activityTitle para la fecha $activityDate."))
         .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -4950,12 +4970,16 @@ fun triggerPushNotification(context: Context, activityTitle: String, activityDat
         .setContentIntent(pendingIntent)
         .setAutoCancel(true)
 
+    if (largeIconBitmap != null) {
+        builder.setLargeIcon(largeIconBitmap)
+    }
+
     // Configurar vibración y luces por defecto (sin pisar el Custom Sound)
     builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE or NotificationCompat.DEFAULT_LIGHTS)
 
     try {
         notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
-        Toast.makeText(context, "📢 Recordatorio de Evento Activado", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "Recordatorio de Evento Activado", Toast.LENGTH_SHORT).show()
     } catch (e: SecurityException) {
         Toast.makeText(context, "Recordatorio: Tienes $activityTitle el $activityDate", Toast.LENGTH_LONG).show()
     }
@@ -6129,6 +6153,10 @@ fun LoginScreen(viewModel: AppViewModel) {
                     .testTag("password_input"),
                 singleLine = true,
                 visualTransformation = if (passwordVisibility) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                    keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                    autoCorrect = false
+                ),
                 shape = RoundedCornerShape(18.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Color(0xFF394931),
@@ -6280,52 +6308,6 @@ fun LoginScreen(viewModel: AppViewModel) {
                     }
                     .padding(vertical = 12.dp)
             )
-
-            // Dynamic Collapsible Seed Account Panel
-            var showDemoCredentials by remember { mutableStateOf(false) }
-
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = if (showDemoCredentials) "Ocultar cuentas demo ▲" else "Ver cuentas de demostración ▼",
-                color = Color(0xFF394931).copy(alpha = 0.6f),
-                fontFamily = GothamRounded,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clickable { showDemoCredentials = !showDemoCredentials }
-                    .padding(8.dp)
-            )
-
-            AnimatedVisibility(visible = showDemoCredentials) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF394931).copy(alpha = 0.05f)),
-                    border = androidx.compose.foundation.BorderStroke(1.2.dp, Color(0xFF394931).copy(alpha = 0.2f))
-                ) {
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(
-                            text = "CUENTAS DE DEMOSTRACIÓN AUTORIZADAS:",
-                            fontFamily = GothamRounded,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF394931),
-                            letterSpacing = 0.5.sp
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = "• Director: coordinador@je.org / JE2026\n• Miembro RAM: miembro2@je.org / miembro2\n• Miembro Salud: miembro3@je.org / miembro3",
-                            fontFamily = GothamRounded,
-                            fontSize = 10.sp,
-                            color = Color(0xFF394931).copy(alpha = 0.8f),
-                            lineHeight = 14.sp
-                        )
-                    }
-                }
-            }
 
             Spacer(modifier = Modifier.weight(1f))
         }
@@ -6800,6 +6782,7 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
     if (showAddMemberDialog) {
         var newEmail by remember { mutableStateOf("") }
         var newPass by remember { mutableStateOf("") }
+        var newPassVisible by remember { mutableStateOf(false) }
         var newName by remember { mutableStateOf("") }
         var newRole by remember { mutableStateOf("miembro activo") }
         var newCountry by remember { mutableStateOf("Ecuador") }
@@ -6942,7 +6925,20 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         onValueChange = { newPass = it },
                                         label = { Text("Contraseña de Acceso") },
                                         modifier = Modifier.fillMaxWidth(),
-                                        singleLine = true
+                                        singleLine = true,
+                                        visualTransformation = if (newPassVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                            autoCorrect = false
+                                        ),
+                                        trailingIcon = {
+                                            IconButton(onClick = { newPassVisible = !newPassVisible }) {
+                                                Icon(
+                                                    imageVector = if (newPassVisible) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                                    contentDescription = if (newPassVisible) "Ocultar contraseña" else "Mostrar contraseña"
+                                                )
+                                            }
+                                        }
                                     )
                                     
                                     Text("Rol:", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
@@ -7388,6 +7384,10 @@ fun AdminMembersPanel(viewModel: AppViewModel, members: List<Member>) {
                                         modifier = Modifier.fillMaxWidth(),
                                         singleLine = true,
                                         visualTransformation = if (passwordVisible) androidx.compose.ui.text.input.VisualTransformation.None else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password,
+                                            autoCorrect = false
+                                        ),
                                         trailingIcon = {
                                             IconButton(onClick = { passwordVisible = !passwordVisible }) {
                                                 Icon(
@@ -8234,7 +8234,7 @@ fun CreateGlobalAlertDialog(
                                     expiryMillis = expiry,
                                     actionUrl = actionUrl.trim().takeIf { it.isNotBlank() },
                                     onSuccess = {
-                                        android.widget.Toast.makeText(context, "Mensaje de Difusión creado exitosamente 📢", android.widget.Toast.LENGTH_SHORT).show()
+                                        android.widget.Toast.makeText(context, "Mensaje de Difusión creado exitosamente", android.widget.Toast.LENGTH_SHORT).show()
                                         isSubmitting = false
                                         onDismiss()
                                     },
@@ -10228,13 +10228,25 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                     color = MaterialTheme.colorScheme.primary
                 )
 
-                var previewVerName by remember { mutableStateOf("2.6") }
-                var previewVerCode by remember { mutableStateOf("26") }
-                var previewUrl by remember { mutableStateOf("https://github.com/davicholeon67/jovenes-ecosistemas/releases") }
-                var previewNotes by remember { mutableStateOf("• Correcciones críticas en la sincronización local y en la nube\n• Rediseño completo de la consola de administración en el módulo Nube") }
-                var previewMandatory by remember { mutableStateOf(false) }
-
                 val liveUpdate = appUpdateState
+                var previewVerName by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(liveUpdate?.latestVersionName ?: "2.6") }
+                var previewVerCode by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(liveUpdate?.latestVersionCode?.toString() ?: "26") }
+                var previewUrl by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(liveUpdate?.downloadUrl ?: "https://drive.google.com/file/d/1A2B3C4D5E6F7G8H9I0J/view?usp=sharing") }
+                var previewNotes by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(liveUpdate?.releaseNotes ?: "• Correcciones críticas en la sincronización local y en la nube\n• Rediseño completo de la consola de administración en el módulo Nube") }
+                var previewMandatory by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(liveUpdate?.let { it.minRequiredVersionCode > currentVersionCode } ?: false) }
+                val updateScope = rememberCoroutineScope()
+                var isCheckingDriveLink by remember { mutableStateOf(false) }
+
+                LaunchedEffect(liveUpdate) {
+                    if (liveUpdate != null) {
+                        previewVerName = liveUpdate.latestVersionName
+                        previewVerCode = liveUpdate.latestVersionCode.toString()
+                        previewUrl = liveUpdate.downloadUrl
+                        previewNotes = liveUpdate.releaseNotes
+                        previewMandatory = liveUpdate.minRequiredVersionCode > currentVersionCode
+                    }
+                }
+
                 if (liveUpdate != null) {
                     Button(
                         onClick = {
@@ -10280,12 +10292,22 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                     )
                 }
 
+                val isDriveUrl = previewUrl.trim().lowercase().let { it.contains("drive.google.com") || it.contains("docs.google.com") }
+
                 OutlinedTextField(
                     value = previewUrl,
                     onValueChange = { previewUrl = it },
-                    label = { Text("URL de descarga del botón", fontSize = 11.sp) },
+                    label = { Text("URL de descarga (Obligatorio Google Drive)", fontSize = 11.sp) },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
+                    isError = previewUrl.isNotBlank() && !isDriveUrl,
+                    supportingText = {
+                        if (previewUrl.isNotBlank() && !isDriveUrl) {
+                            Text("⚠️ El enlace debe ser de Google Drive (drive.google.com)", color = MaterialTheme.colorScheme.error, fontSize = 10.sp)
+                        } else if (isDriveUrl) {
+                            Text("✓ Dominio Google Drive válido", color = Color(0xFF2E7D32), fontSize = 10.sp)
+                        }
+                    },
                     shape = RoundedCornerShape(8.dp)
                 )
 
@@ -10333,7 +10355,23 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = { showPreviewDialog = true },
+                        onClick = {
+                            if (!isDriveUrl) {
+                                Toast.makeText(context, "El enlace debe ser una URL válida de Google Drive.", Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
+                            isCheckingDriveLink = true
+                            updateScope.launch {
+                                val (isValid, msg) = viewModel.verifyGoogleDriveUrl(previewUrl)
+                                isCheckingDriveLink = false
+                                if (isValid) {
+                                    showPreviewDialog = true
+                                } else {
+                                    Toast.makeText(context, "Fallo al verificar Google Drive: $msg", Toast.LENGTH_LONG).show()
+                                }
+                            }
+                        },
+                        enabled = !isCheckingDriveLink,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
                             containerColor = MaterialTheme.colorScheme.secondaryContainer,
@@ -10341,13 +10379,22 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                         ),
                         shape = RoundedCornerShape(12.dp)
                     ) {
-                        Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        if (isCheckingDriveLink) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.Visibility, contentDescription = null, modifier = Modifier.size(16.dp))
+                        }
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Previsualizar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(if (isCheckingDriveLink) "Verificando..." else "Previsualizar", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Button(
                         onClick = {
+                            if (!isDriveUrl) {
+                                Toast.makeText(context, "El enlace debe ser una URL válida de Google Drive.", Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
+                            isCheckingDriveLink = true
                             val code = previewVerCode.toIntOrNull() ?: 26
                             val minCode = if (previewMandatory) (currentVersionCode + 1) else 0
                             val updateData = com.example.data.AppUpdate(
@@ -10360,13 +10407,16 @@ fun AdminCloudPanel(viewModel: AppViewModel) {
                             viewModel.publishAppUpdateToCloud(
                                 update = updateData,
                                 onSuccess = {
+                                    isCheckingDriveLink = false
                                     Toast.makeText(context, "¡Actualización publicada en la Nube! 🚀", Toast.LENGTH_LONG).show()
                                 },
                                 onFailure = { err ->
+                                    isCheckingDriveLink = false
                                     Toast.makeText(context, "Error: $err", Toast.LENGTH_LONG).show()
                                 }
                             )
                         },
+                        enabled = !isCheckingDriveLink,
                         modifier = Modifier.weight(1.2f),
                         shape = RoundedCornerShape(12.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
@@ -10995,13 +11045,14 @@ fun ActivityEditDialog(
     var loc by remember {
         mutableStateOf(
             if (isVirtual) {
-                if (activity.location.contains(" - Enlace:")) {
+                val base = if (activity.location.contains(" - Enlace:")) {
                     activity.location.substringBefore(" - Enlace:")
                 } else if (activity.location.contains("Enlace:")) {
                     activity.location.substringBefore("Enlace:")
                 } else {
                     activity.location
                 }
+                base.replace(Regex("(?i)\\s*\\(virtual\\)\\s*"), "").trim()
             } else {
                 activity.location
             }
@@ -11626,7 +11677,8 @@ fun ActivityEditDialog(
                             if (title.isNotBlank() && desc.isNotBlank()) {
                                 val finalLoc = if (isVirtual) {
                                     val platform = loc.ifBlank { "Virtual" }
-                                    if (virtualLink.isNotBlank()) "$platform - Enlace: $virtualLink" else platform
+                                    val platformWithVirtual = if (platform.lowercase().contains("virtual")) platform else "$platform (Virtual)"
+                                    if (virtualLink.isNotBlank()) "$platformWithVirtual - Enlace: $virtualLink" else platformWithVirtual
                                 } else {
                                     loc.ifBlank { "Presencial" }
                                 }

@@ -96,15 +96,25 @@ class ReminderReceiver : BroadcastReceiver() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val largeIconBitmap = try {
+            android.graphics.BitmapFactory.decodeResource(context.resources, com.example.R.drawable.ic_clover)
+        } catch (e: Exception) {
+            null
+        }
+
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(com.example.R.mipmap.ic_launcher)
-            .setContentTitle("Recordatorio de Evento 🌿")
+            .setSmallIcon(com.example.R.drawable.ic_notification_clover)
+            .setContentTitle("Recordatorio de Evento")
             .setContentText("¡Es hora de tu actividad!: $activityTitle")
             .setStyle(NotificationCompat.BigTextStyle().bigText("¡Es hora de tu actividad!: $activityTitle. Revisa los detalles en la aplicación."))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setSound(soundUri)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+
+        if (largeIconBitmap != null) {
+            builder.setLargeIcon(largeIconBitmap)
+        }
 
         builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE or NotificationCompat.DEFAULT_LIGHTS)
 

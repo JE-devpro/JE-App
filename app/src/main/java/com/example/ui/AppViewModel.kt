@@ -20,6 +20,8 @@ import com.example.data.api.CloudSyncClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.*
 import com.squareup.moshi.Moshi
@@ -30,6 +32,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: AppRepository
+    private val syncMutex = Mutex()
 
     val allActivities: StateFlow<List<EcoActivity>>
     val carnetProfile: StateFlow<CarnetProfile?>
@@ -124,9 +127,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         checkForUpdates()
     }
 
+    suspend fun verifyGoogleDriveUrl(url: String): Pair<Boolean, String> = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) {
+            return@withContext Pair(false, "El enlace de descarga no puede estar vacío.")
+        }
+        val lower = cleanUrl.lowercase()
+        if (!lower.contains("drive.google.com") && !lower.contains("docs.google.com")) {
+            return@withContext Pair(false, "El enlace debe ser una URL válida de Google Drive (drive.google.com).")
+        }
+        try {
+            val urlObj = java.net.URL(cleanUrl)
+            val conn = urlObj.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            conn.instanceFollowRedirects = true
+            val code = conn.responseCode
+            if (code in 200..399) {
+                return@withContext Pair(true, "Enlace de Google Drive verificado exitosamente.")
+            } else {
+                return@withContext Pair(false, "El enlace de Google Drive no existe o no se puede acceder (Código HTTP $code).")
+            }
+        } catch (e: Exception) {
+            return@withContext Pair(false, "No se pudo verificar el enlace de Google Drive: ${e.localizedMessage ?: "Fallo de conexión"}")
+        }
+    }
+
     fun publishAppUpdateToCloud(update: AppUpdate, onSuccess: () -> Unit, onFailure: (String) -> Unit) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                val (isValidDrive, driveError) = verifyGoogleDriveUrl(update.downloadUrl)
+                if (!isValidDrive) {
+                    viewModelScope.launch(Dispatchers.Main) {
+                        onFailure(driveError)
+                    }
+                    return@launch
+                }
+
                 val url = _cloudSyncUrl.value
                 if (url.isBlank()) {
                     viewModelScope.launch(Dispatchers.Main) {
@@ -137,6 +176,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val result = CloudSyncClient.uploadAppUpdate(url, update)
                 if (result) {
                     _appUpdateState.value = update
+                    saveCachedAppUpdate(update)
                     viewModelScope.launch(Dispatchers.Main) {
                         onSuccess()
                     }
@@ -160,7 +200,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val url = _cloudSyncUrl.value
                     if (url.isNotBlank()) {
                         val update = CloudSyncClient.fetchAppUpdate(url)
-                        _appUpdateState.value = update
+                        if (update != null) {
+                            _appUpdateState.value = update
+                            saveCachedAppUpdate(update)
+                        }
                     }
                 } else {
                     val urlString = _updateJsonUrl.value
@@ -180,7 +223,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             .build()
                         val adapter = moshi.adapter(AppUpdate::class.java)
                         val update = adapter.fromJson(bodyString)
-                        _appUpdateState.value = update
+                        if (update != null) {
+                            _appUpdateState.value = update
+                            saveCachedAppUpdate(update)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -202,6 +248,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _prefNotifNube.value = sharedPrefs.getBoolean("pref_notif_nube$suffix", sharedPrefs.getBoolean("pref_notif_nube", true))
         _prefNotifSistema.value = sharedPrefs.getBoolean("pref_notif_sistema$suffix", sharedPrefs.getBoolean("pref_notif_sistema", true))
         _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", "light") ?: "light"
+        loadCachedAppUpdate()
+    }
+
+    private fun saveCachedAppUpdate(update: AppUpdate?) {
+        if (update == null) return
+        try {
+            val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+            val json = moshi.adapter(AppUpdate::class.java).toJson(update)
+            sharedPrefs.edit().putString("pref_app_update_json", json).apply()
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "Failed to cache appUpdate", e)
+        }
+    }
+
+    private fun loadCachedAppUpdate() {
+        val json = sharedPrefs.getString("pref_app_update_json", null) ?: return
+        try {
+            val moshi = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+            val update = moshi.adapter(AppUpdate::class.java).fromJson(json)
+            if (update != null) {
+                _appUpdateState.value = update
+            }
+        } catch (e: Exception) {
+            Log.e("AppViewModel", "Failed to load cached appUpdate", e)
+        }
     }
 
     fun updateCloudSyncUrl(newUrl: String) {
@@ -356,8 +427,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         uploadPrefsToCloud()
     }
 
+    private fun getCircularBitmap(bitmap: android.graphics.Bitmap): android.graphics.Bitmap {
+        val output = android.graphics.Bitmap.createBitmap(
+            bitmap.width,
+            bitmap.height,
+            android.graphics.Bitmap.Config.ARGB_8888
+        )
+        val canvas = android.graphics.Canvas(output)
+        val color = 0xff424242.toInt()
+        val paint = android.graphics.Paint()
+        val rect = android.graphics.Rect(0, 0, bitmap.width, bitmap.height)
+        paint.isAntiAlias = true
+        canvas.drawARGB(0, 0, 0, 0)
+        paint.color = color
+        val radius = if (bitmap.width < bitmap.height) bitmap.width / 2f else bitmap.height / 2f
+        canvas.drawCircle(bitmap.width / 2f, bitmap.height / 2f, radius, paint)
+        paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+        canvas.drawBitmap(bitmap, rect, rect, paint)
+        return output
+    }
+
     fun triggerSystemNotification(title: String, message: String) {
-        if (title == "Inscripción en Actividad 🌿") {
+        if (title == "Inscripción en Actividad") {
             if (!checkIfAdmin()) return
         }
         val context = getApplication<Application>()
@@ -391,8 +482,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         val defaultSoundUri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
 
+        val largeIconBitmap = try {
+            val original = android.graphics.BitmapFactory.decodeResource(context.resources, com.example.R.drawable.ic_clover)
+            if (original != null) getCircularBitmap(original) else null
+        } catch (e: Exception) {
+            null
+        }
+
         val builder = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(com.example.R.mipmap.ic_launcher)
+            .setSmallIcon(com.example.R.drawable.ic_notification_clover)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
@@ -401,6 +499,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .setDefaults(NotificationCompat.DEFAULT_ALL)
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
+
+        if (largeIconBitmap != null) {
+            builder.setLargeIcon(largeIconBitmap)
+        }
 
         try {
             notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
@@ -736,12 +838,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // Track creation in status alerts
                 if (_prefNotifSistema.value) {
                     val notif = EcoNotification(
-                        title = "Miembro Creado 📋",
+                        title = "Miembro Creado",
                         message = "Admin creó cuenta para: $fullName",
                         timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                     )
                     repository.insertNotification(notif)
-                    triggerSystemNotification("Miembro Creado 📋", "Admin creó cuenta para: $fullName")
+                    triggerSystemNotification("Miembro Creado", "Admin creó cuenta para: $fullName")
                 }
                 viewModelScope.launch(Dispatchers.Main) { onResult(true) }
                 autoSync()
@@ -783,12 +885,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // Log update
             if (_prefNotifSistema.value) {
                 val notif = EcoNotification(
-                    title = "Perfil Actualizado ✍️",
+                    title = "Perfil Actualizado",
                     message = "Se editó el carné de ${cleanMember.fullName}",
                     timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                 )
                 repository.insertNotification(notif)
-                triggerSystemNotification("Perfil Actualizado ✍️", "Se editó el carné de ${cleanMember.fullName}")
+                triggerSystemNotification("Perfil Actualizado", "Se editó el carné de ${cleanMember.fullName}")
             }
             autoSync()
         }
@@ -836,12 +938,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // Alert coordinator
             if (_prefNotifSistema.value) {
                 val notif = EcoNotification(
-                    title = "Miembro Removido 🗑️",
+                    title = "Miembro Removido",
                     message = "Se eliminó el acceso de: $email",
                     timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                 )
                 repository.insertNotification(notif)
-                triggerSystemNotification("Miembro Removido 🗑️", "Se eliminó el acceso de: $email")
+                triggerSystemNotification("Miembro Removido", "Se eliminó el acceso de: $email")
             }
             autoSync()
         }
@@ -899,14 +1001,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             // Alert notification that activity was programmed
             if (_prefNotifActividades.value) {
-                val calendarPrefix = if (googleCalendarLinked.value) "Sincronizado con Google Calendar 📅: " else ""
+                val calendarPrefix = if (googleCalendarLinked.value) "Sincronizado con Google Calendar: " else ""
                 val notif = EcoNotification(
-                    title = "Actividad Creada 🌾",
+                    title = "Actividad Creada",
                     message = "${calendarPrefix}Se programó '$title' para el $date de junio",
                     timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                 )
                 repository.insertNotification(notif)
-                triggerSystemNotification("Nueva Actividad 🌾", "${calendarPrefix}Se programó '$title' para el $date de junio")
+                triggerSystemNotification("Nueva Actividad", "${calendarPrefix}Se programó '$title' para el $date de junio")
             }
             autoSync()
         }
@@ -976,12 +1078,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (_prefNotifActividades.value) {
                     val timeStamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                     val notification = EcoNotification(
-                        title = "Inscripción en Actividad 🌿",
+                        title = "Inscripción en Actividad",
                         message = "${member.fullName} (${member.role}) se inscribió a '${activity.title}'",
                         timestamp = timeStamp
                     )
                     repository.insertNotification(notification)
-                    triggerSystemNotification("Inscripción en Actividad 🌿", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
+                    triggerSystemNotification("Inscripción en Actividad", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
                 }
             }
             autoSync()
@@ -1199,12 +1301,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // News / Article publication notification
             if (_prefNotifNovedades.value) {
                 val notif = EcoNotification(
-                    title = "Artículo Publicado 📰",
+                    title = "Artículo Publicado",
                     message = "Se publicó '$title' en la sección de Novedades.",
                     timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                 )
                 repository.insertNotification(notif)
-                triggerSystemNotification("Artículos y Novedades 📰", "Se publicó el artículo: $title")
+                triggerSystemNotification("Artículos y Novedades", "Se publicó el artículo: $title")
             }
             autoSync()
         }
@@ -1371,12 +1473,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // AI Article notification
                 if (_prefNotifNovedades.value) {
                     val notif = EcoNotification(
-                        title = "Asesoría AI Recibida 🧠",
+                        title = "Asesoría AI Recibida",
                         message = "Se generó: $parsedTitle.",
                         timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                     )
                     repository.insertNotification(notif)
-                    triggerSystemNotification("Asesoría AI Recibida 🧠", "Se generó: $parsedTitle")
+                    triggerSystemNotification("Asesoría AI Recibida", "Se generó: $parsedTitle")
                 }
 
             } catch (e: Exception) {
@@ -1681,28 +1783,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun performCloudMerge(url: String): String {
-        return kotlinx.coroutines.withContext(Dispatchers.IO) {
-            val member = _loggedInMember.value
-            val userEmail = member?.email ?: ""
-            val emailKey = if (userEmail.isNotBlank()) userEmail.trim().lowercase() else "anonymous"
-            val hasSyncedKey = "first_sync_done_$emailKey"
+        return syncMutex.withLock {
+            kotlinx.coroutines.withContext(Dispatchers.IO) {
+                val member = _loggedInMember.value
+                val userEmail = member?.email ?: ""
+                val emailKey = if (userEmail.isNotBlank()) userEmail.trim().lowercase() else "anonymous"
+                val hasSyncedKey = "first_sync_done_$emailKey"
 
-            val isAdmin = checkIfAdmin()
+                val isAdmin = checkIfAdmin()
 
-            // 1. Fetch remote data from cloud (nullable to distinguish fetch failures from empty list)
-            val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch activities", e); null }
-            val isUserAdmin = userEmail.trim().lowercase() == "coordinador@je.org" || isAdmin
-            val remoteMembers = try {
-                if (userEmail.isNotBlank()) {
-                    val single = CloudSyncClient.fetchSingleMember(url, userEmail)
-                    if (single != null) listOf(single) else emptyList()
-                } else {
-                    emptyList()
+                // 1. Fetch remote data from cloud (nullable to distinguish fetch failures from empty list)
+                val remoteActivities = try { CloudSyncClient.fetchActivities(url) } catch (e: Exception) { Log.e("AppViewModel", "Failed to fetch activities", e); null }
+                val isUserAdmin = userEmail.trim().lowercase() == "coordinador@je.org" || isAdmin
+                val remoteMembers = try {
+                    if (userEmail.isNotBlank()) {
+                        val single = CloudSyncClient.fetchSingleMember(url, userEmail)
+                        if (single != null) listOf(single) else emptyList()
+                    } else {
+                        emptyList()
+                    }
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to fetch single member profile", e)
+                    null
                 }
-            } catch (e: Exception) {
-                Log.e("AppViewModel", "Failed to fetch single member profile", e)
-                null
-            }
             
             // If the user is coordinator or admin, fetch and populate _adminMembersList in-memory directly from cloud
             if (isUserAdmin) {
@@ -1935,6 +2038,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             "Sincronización Completa ✓ Sincronizados ${mergedArticles.size} artículos, ${mergedActivities.size} eventos, ${mergedMembers.size} perfiles y ${mergedEnrollments.size} inscripciones.$statusSuffix"
+            }
         }
     }
 
@@ -1953,14 +2057,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 _syncState.value = SyncState.Success(result)
                 if (_prefNotifNube.value) {
                     val notif = EcoNotification(
-                        title = "Nube Sincronizada ☁️",
+                        title = "Nube Sincronizada",
                         message = result,
                         timestamp = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                     )
                     kotlinx.coroutines.withContext(Dispatchers.IO) {
                         repository.insertNotification(notif)
                     }
-                    triggerSystemNotification("Nube Sincronizada ☁️", result)
+                    triggerSystemNotification("Nube Sincronizada", result)
                 }
                 onComplete(true, result)
             } catch (e: Exception) {
