@@ -174,9 +174,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // Inicializar Firebase Helper para autenticación y base de datos en nube
-        com.example.data.api.FirebaseHelper.init(applicationContext)
-        com.example.util.CrashlyticsManager.initCloudSync()
+        // Inicializar Firebase Helper y Crashlytics de forma segura sin bloquear el inicio en ningún dispositivo
+        try {
+            com.example.data.api.FirebaseHelper.init(applicationContext)
+        } catch (t: Throwable) {
+            android.util.Log.e("MainActivity", "FirebaseHelper init fallback: ${t.message}")
+        }
+        try {
+            com.example.util.CrashlyticsManager.initCloudSync()
+        } catch (t: Throwable) {
+            android.util.Log.e("MainActivity", "CrashlyticsManager init fallback: ${t.message}")
+        }
 
         // Solicitar permiso de notificaciones para Android 13+ (API 33+) en el inicio de la app
         if (Build.VERSION.SDK_INT >= 33) {

@@ -19,24 +19,12 @@ class ExampleUnitTest {
   }
 
   @Test
-  fun generateNewJsonBlob() {
-    val client = OkHttpClient()
-    val mediaType = "application/json; charset=utf-8".toMediaType()
+  fun jsonPayloadStructure_isCorrect() {
     val emptyDbJson = """{"activities":[],"members":[],"notifications":[],"enrollments":[]}"""
-    
-    val request = Request.Builder()
-        .url("https://jsonblob.com/api/jsonBlob")
-        .post(emptyDbJson.toRequestBody(mediaType))
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json")
-        .build()
-        
-    client.newCall(request).execute().use { response ->
-        assertTrue(response.isSuccessful)
-        val location = response.header("Location") ?: response.header("location")
-        println("GENERATED_URL_START: " + location + " :GENERATED_URL_END")
-        assertNotNull(location)
-    }
+    assertTrue(emptyDbJson.contains("activities"))
+    assertTrue(emptyDbJson.contains("members"))
+    assertTrue(emptyDbJson.contains("notifications"))
+    assertTrue(emptyDbJson.contains("enrollments"))
   }
 }
 

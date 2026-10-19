@@ -25,13 +25,38 @@ object FirebaseHelper {
             }
         }
 
+    /**
+     * Checks whether a valid (non-mock) Firebase API key is configured.
+     */
+    val isRealFirebaseConfigured: Boolean
+        get() {
+            return try {
+                val app = FirebaseApp.getInstance()
+                val key = app.options.apiKey
+                key.isNotBlank() && !key.contains("Mock", ignoreCase = true) && !key.startsWith("AIzaSyA_Mock")
+            } catch (e: Exception) {
+                false
+            }
+        }
+
     fun init(context: Context) {
         if (isDefaultAppInitialized) {
             Log.d(TAG, "Firebase DEFAULT app is already initialized.")
             return
         }
 
-        // Try initializing programmatically first so Firebase Auth & RTDB work flawlessly
+        // Try standard resource-based initialization first (e.g. from google-services.json)
+        try {
+            val app = FirebaseApp.initializeApp(context.applicationContext)
+            if (app != null && isDefaultAppInitialized) {
+                Log.d(TAG, "Firebase DEFAULT app initialized via auto-config resource providers.")
+                return
+            }
+        } catch (e: Exception) {
+            Log.d(TAG, "Auto-config resource provider not found, attempting programmatic config for RTDB.")
+        }
+
+        // Programmatic fallback for Database and Cloud Logging
         try {
             val options = FirebaseOptions.Builder()
                 .setApiKey("AIzaSyA_Mock_Key_For_Firebase_Auth_EcoTech_2026")
@@ -39,25 +64,19 @@ object FirebaseHelper {
                 .setDatabaseUrl("https://je-app-3e271-default-rtdb.firebaseio.com/")
                 .setProjectId("je-app-3e271")
                 .build()
-            Log.d(TAG, "Attempting programmatic Firebase initialization with custom options...")
             FirebaseApp.initializeApp(context.applicationContext, options)
-            Log.d(TAG, "Firebase DEFAULT app initialized dynamically successfully.")
+            Log.d(TAG, "Firebase DEFAULT app initialized dynamically for Realtime Database.")
         } catch (e: Exception) {
-            Log.w(TAG, "Programmatic Firebase initialization failed, trying standard resource-based initialization: ${e.message}")
-            try {
-                FirebaseApp.initializeApp(context.applicationContext)
-                Log.d(TAG, "Firebase DEFAULT app initialized via auto-config resource providers.")
-            } catch (ex: Exception) {
-                Log.e(TAG, "All Firebase initialization paths failed. Firebase services will be disabled.", ex)
-            }
+            Log.w(TAG, "Firebase initialization error: ${e.message}")
         }
     }
 
     /**
      * Safely retrieves reference to Firebase Auth. Wraps inside try-catch to prevent crash.
+     * Only returns an instance if a real, valid Firebase API key is present.
      */
     fun getAuthOrNull(): FirebaseAuth? {
-        if (!isDefaultAppInitialized) return null
+        if (!isDefaultAppInitialized || !isRealFirebaseConfigured) return null
         return try {
             FirebaseAuth.getInstance()
         } catch (e: Exception) {
