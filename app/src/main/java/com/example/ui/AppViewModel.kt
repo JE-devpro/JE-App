@@ -247,7 +247,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         _prefNotifNovedades.value = sharedPrefs.getBoolean("pref_notif_novedades$suffix", sharedPrefs.getBoolean("pref_notif_novedades", true))
         _prefNotifNube.value = sharedPrefs.getBoolean("pref_notif_nube$suffix", sharedPrefs.getBoolean("pref_notif_nube", true))
         _prefNotifSistema.value = sharedPrefs.getBoolean("pref_notif_sistema$suffix", sharedPrefs.getBoolean("pref_notif_sistema", true))
-        _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", "light") ?: "light"
+        val fallbackTheme = sharedPrefs.getString("pref_theme", "light") ?: "light"
+        _prefTheme.value = sharedPrefs.getString("pref_theme$suffix", fallbackTheme) ?: fallbackTheme
         loadCachedAppUpdate()
     }
 
@@ -324,7 +325,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun getLocalPreferences(): com.example.data.CloudPreferences {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
-        val lastUpdated = sharedPrefs.getLong("pref_last_updated$suffix", 0L)
+        val lastUpdated = sharedPrefs.getLong("pref_last_updated$suffix", sharedPrefs.getLong("pref_last_updated", 0L))
         return com.example.data.CloudPreferences(
             prefTheme = _prefTheme.value,
             prefNotifActividades = _prefNotifActividades.value,
@@ -339,12 +340,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val email = _loggedInMember.value?.email
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         sharedPrefs.edit().apply {
+            putString("pref_theme", prefs.prefTheme)
             putString("pref_theme$suffix", prefs.prefTheme)
+            putBoolean("pref_notif_actividades", prefs.prefNotifActividades)
             putBoolean("pref_notif_actividades$suffix", prefs.prefNotifActividades)
+            putBoolean("pref_notif_novedades", prefs.prefNotifNovedades)
             putBoolean("pref_notif_novedades$suffix", prefs.prefNotifNovedades)
+            putBoolean("pref_notif_nube", prefs.prefNotifNube)
             putBoolean("pref_notif_nube$suffix", prefs.prefNotifNube)
+            putBoolean("pref_notif_sistema", prefs.prefNotifSistema)
             putBoolean("pref_notif_sistema$suffix", prefs.prefNotifSistema)
             putLong("pref_last_updated$suffix", prefs.lastUpdated)
+            putLong("pref_last_updated", prefs.lastUpdated)
         }.apply()
         _prefTheme.value = prefs.prefTheme
         _prefNotifActividades.value = prefs.prefNotifActividades
@@ -372,8 +379,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         val now = System.currentTimeMillis()
         sharedPrefs.edit().apply {
+            putString("pref_theme", theme)
             putString("pref_theme$suffix", theme)
             putLong("pref_last_updated$suffix", now)
+            putLong("pref_last_updated", now)
         }.apply()
         _prefTheme.value = theme
         uploadPrefsToCloud()
@@ -384,8 +393,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         val now = System.currentTimeMillis()
         sharedPrefs.edit().apply {
+            putBoolean("pref_notif_actividades", enabled)
             putBoolean("pref_notif_actividades$suffix", enabled)
             putLong("pref_last_updated$suffix", now)
+            putLong("pref_last_updated", now)
         }.apply()
         _prefNotifActividades.value = enabled
         uploadPrefsToCloud()
@@ -396,8 +407,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         val now = System.currentTimeMillis()
         sharedPrefs.edit().apply {
+            putBoolean("pref_notif_novedades", enabled)
             putBoolean("pref_notif_novedades$suffix", enabled)
             putLong("pref_last_updated$suffix", now)
+            putLong("pref_last_updated", now)
         }.apply()
         _prefNotifNovedades.value = enabled
         uploadPrefsToCloud()
@@ -408,8 +421,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         val now = System.currentTimeMillis()
         sharedPrefs.edit().apply {
+            putBoolean("pref_notif_nube", enabled)
             putBoolean("pref_notif_nube$suffix", enabled)
             putLong("pref_last_updated$suffix", now)
+            putLong("pref_last_updated", now)
         }.apply()
         _prefNotifNube.value = enabled
         uploadPrefsToCloud()
@@ -420,8 +435,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val suffix = if (email.isNullOrBlank()) "" else "_${email.trim().lowercase()}"
         val now = System.currentTimeMillis()
         sharedPrefs.edit().apply {
+            putBoolean("pref_notif_sistema", enabled)
             putBoolean("pref_notif_sistema$suffix", enabled)
             putLong("pref_last_updated$suffix", now)
+            putLong("pref_last_updated", now)
         }.apply()
         _prefNotifSistema.value = enabled
         uploadPrefsToCloud()
@@ -568,6 +585,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("AppViewModel", "Auto-login on app launch success: $success")
                 }
             }
+        } else {
+            viewModelScope.launch {
+                checkForUpdates()
+                autoSync()
+            }
         }
     }
 
@@ -684,10 +706,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         
                         if (remoteMember != null) {
                             val localMembers = repository.allMembers.first()
-                            val mergedMembers = smartMergeMembers(localMembers, listOf(remoteMember), isFirstSync = true)
+                            val emailKey = email.trim().lowercase()
+                            val isFirstSync = !sharedPrefs.getBoolean("first_sync_done_$emailKey", false)
+                            val mergedMembers = smartMergeMembers(localMembers, listOf(remoteMember), isFirstSync = isFirstSync, activeUserEmail = emailKey)
                             // Clean local database to ONLY contain this specific logged-in user's profile
-                            val filteredMembers = mergedMembers.filter { it.email.trim().lowercase() == email.trim().lowercase() }
+                            val filteredMembers = mergedMembers.filter { it.email.trim().lowercase() == emailKey }
                             repository.overwriteMembers(filteredMembers)
+                            sharedPrefs.edit().putBoolean("first_sync_done_$emailKey", true).apply()
+                            
+                            val freshSelf = filteredMembers.firstOrNull()
+                            if (freshSelf != null) {
+                                try {
+                                    CloudSyncClient.uploadSingleMember(url, freshSelf)
+                                } catch (ex: Exception) {
+                                    Log.e("AppViewModel", "Failed to upload fresh member on login: ${ex.localizedMessage}")
+                                }
+                            }
                         }
                         
                         // If it is coordinator or admin, only pre-fetch and populate _adminMembersList in-memory
@@ -1010,6 +1044,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 repository.insertNotification(notif)
                 triggerSystemNotification("Nueva Actividad", "${calendarPrefix}Se programó '$title' para el $date de junio")
             }
+
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    val currentActs = repository.allActivities.first()
+                    CloudSyncClient.uploadActivities(url, currentActs)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Immediate cloud upload of added activity failed: ${e.localizedMessage}")
+                }
+            }
+
             autoSync()
         }
     }
@@ -1025,7 +1070,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.deleteActivity(id)
             repository.deleteEnrollmentsByActivityId(id)
             val url = _cloudSyncUrl.value
-            if (url.isNotBlank() && checkIfAdmin()) {
+            if (url.isNotBlank()) {
                 try {
                     val remainingAct = repository.allActivities.first()
                     CloudSyncClient.uploadActivities(url, remainingAct)
@@ -1086,6 +1131,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     triggerSystemNotification("Inscripción en Actividad", "${member.fullName} (${member.role}) se inscribió a '${activity.title}'")
                 }
             }
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    val activeMem = _loggedInMember.value ?: member
+                    CloudSyncClient.uploadSingleMember(url, activeMem)
+                    val currentEnrollments = repository.allEnrollments.first()
+                    CloudSyncClient.uploadEnrollments(url, currentEnrollments)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload enrollment/member to cloud: ${e.localizedMessage}")
+                }
+            }
             autoSync()
         }
     }
@@ -1120,6 +1176,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 com.example.receiver.ReminderScheduler.cancelReminder(context, activity)
             }
 
+            val url = _cloudSyncUrl.value
+            if (url.isNotBlank()) {
+                try {
+                    val currentEnrollments = repository.allEnrollments.first()
+                    CloudSyncClient.uploadEnrollments(url, currentEnrollments)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed to upload reminder enrollment to cloud: ${e.localizedMessage}")
+                }
+            }
+
             autoSync()
         }
     }
@@ -1141,7 +1207,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.updateActivity(activity)
             val url = _cloudSyncUrl.value
-            if (url.isNotBlank() && checkIfAdmin()) {
+            if (url.isNotBlank()) {
                 try {
                     val currentActs = repository.allActivities.first()
                     CloudSyncClient.uploadActivities(url, currentActs)
@@ -1153,7 +1219,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Coordinator can edit any user's profile and points
+    // Coordinator or user can edit profile
     fun saveProfile(
         fullName: String,
         association: String,
@@ -1171,8 +1237,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     country = country,
                     emojiAvatar = emojiAvatar
                 )
+                val emailKey = updated.email.trim().lowercase()
+                sharedPrefs.edit().putBoolean("first_sync_done_$emailKey", true).apply()
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                _adminMembersList.value = _adminMembersList.value.map {
+                    if (it.email.trim().lowercase() == emailKey) updated else it
+                }
+                val url = _cloudSyncUrl.value
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, updated)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload updated profile to cloud: ${e.localizedMessage}")
+                    }
+                }
             } else {
                 val current = repository.carnetProfile.firstOrNull()
                 val points = current?.points ?: 50
@@ -1200,8 +1279,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val active = _loggedInMember.value
             if (active != null) {
                 val updated = active.copy(photoUri = photoUri)
+                val emailKey = updated.email.trim().lowercase()
+                sharedPrefs.edit().putBoolean("first_sync_done_$emailKey", true).apply()
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                _adminMembersList.value = _adminMembersList.value.map {
+                    if (it.email.trim().lowercase() == emailKey) updated else it
+                }
+                val url = _cloudSyncUrl.value
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, updated)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload profile photo to cloud: ${e.localizedMessage}")
+                    }
+                }
                 autoSync()
             }
         }
@@ -1212,8 +1304,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val active = _loggedInMember.value
             if (active != null) {
                 val updated = active.copy(customCara1Uri = cara1Uri)
+                val emailKey = updated.email.trim().lowercase()
+                sharedPrefs.edit().putBoolean("first_sync_done_$emailKey", true).apply()
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                _adminMembersList.value = _adminMembersList.value.map {
+                    if (it.email.trim().lowercase() == emailKey) updated else it
+                }
+                val url = _cloudSyncUrl.value
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, updated)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload custom card front to cloud: ${e.localizedMessage}")
+                    }
+                }
             } else {
                 val current = repository.carnetProfile.firstOrNull()
                 if (current != null) {
@@ -1230,8 +1335,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val active = _loggedInMember.value
             if (active != null) {
                 val updated = active.copy(customCara2Uri = cara2Uri)
+                val emailKey = updated.email.trim().lowercase()
+                sharedPrefs.edit().putBoolean("first_sync_done_$emailKey", true).apply()
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                _adminMembersList.value = _adminMembersList.value.map {
+                    if (it.email.trim().lowercase() == emailKey) updated else it
+                }
+                val url = _cloudSyncUrl.value
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, updated)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload custom card back to cloud: ${e.localizedMessage}")
+                    }
+                }
             } else {
                 val current = repository.carnetProfile.firstOrNull()
                 if (current != null) {
@@ -1248,7 +1366,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             repository.insertArticle(article)
             removeTombstone("article_${article.title.trim().lowercase()}_${article.publishDate.trim()}")
             val url = _cloudSyncUrl.value
-            if (url.isNotBlank() && checkIfAdmin()) {
+            if (url.isNotBlank()) {
                 try {
                     val currentArticles = repository.allArticles.first()
                     CloudSyncClient.uploadArticles(url, currentArticles)
@@ -1275,7 +1393,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             removeTombstone("article_${newArticle.title.trim().lowercase()}_${newArticle.publishDate.trim()}")
 
             val url = _cloudSyncUrl.value
-            if (url.isNotBlank() && checkIfAdmin()) {
+            if (url.isNotBlank()) {
                 try {
                     val currentArticles = repository.allArticles.first()
                     CloudSyncClient.uploadArticles(url, currentArticles)
@@ -1290,6 +1408,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val updated = active.copy(points = active.points + 25)
                 repository.updateMember(updated)
                 _loggedInMember.value = updated
+                if (url.isNotBlank()) {
+                    try {
+                        CloudSyncClient.uploadSingleMember(url, updated)
+                    } catch (e: Exception) {
+                        Log.e("AppViewModel", "Failed to upload points update to cloud: ${e.localizedMessage}")
+                    }
+                }
             } else {
                 val profile = repository.carnetProfile.firstOrNull()
                 if (profile != null) {
@@ -1322,7 +1447,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             repository.deleteArticle(id)
             val url = _cloudSyncUrl.value
-            if (url.isNotBlank() && checkIfAdmin()) {
+            if (url.isNotBlank()) {
                 try {
                     val remainingArticles = repository.allArticles.first()
                     CloudSyncClient.uploadArticles(url, remainingArticles)
@@ -1487,15 +1612,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun smartMergeMembers(localMembers: List<Member>, remoteMembers: List<Member>, isFirstSync: Boolean = false): List<Member> {
+    private fun smartMergeMembers(
+        localMembers: List<Member>, 
+        remoteMembers: List<Member>, 
+        isFirstSync: Boolean = false,
+        activeUserEmail: String? = null
+    ): List<Member> {
         val mergedMembers = mutableListOf<Member>()
         val remoteMap = remoteMembers.associateBy { it.email.trim().lowercase() }
         val localMap = localMembers.associateBy { it.email.trim().lowercase() }
         
         val allEmails = (localMap.keys + remoteMap.keys).distinct()
-        val isAdminSelf = checkIfAdmin()
-        val userEmail = _loggedInMember.value?.email ?: ""
-        val tombstones = getTombstones()
+        val userEmail = (activeUserEmail ?: _loggedInMember.value?.email ?: "").trim().lowercase()
+        val isAdminSelf = checkIfAdmin() || (userEmail == "coordinador@je.org")
+        val tombstones = getTombstones(userEmail)
 
         for (email in allEmails) {
             val cleanEmail = email.trim().lowercase()
@@ -1507,36 +1637,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val localMember = localMap[cleanEmail]
             val remoteMember = remoteMap[cleanEmail]
             if (localMember != null && remoteMember != null) {
-                val isSelf = cleanEmail == userEmail.trim().lowercase()
-                val useLocal = (isSelf || isAdminSelf) && !isFirstSync
+                val isSelf = cleanEmail == userEmail
+                // Avoid adopting local unedited seed template over valid remote data
+                val isLocalDefaultSeed = localMember.credentialId == "JE-DIR-01" && localMember.association == "Central Jóvenes y Ecosistemas"
+                val useLocal = when {
+                    isLocalDefaultSeed && !remoteMember.credentialId.isNullOrBlank() && remoteMember.credentialId != "JE-DIR-01" -> false
+                    isSelf -> !isFirstSync || !isLocalDefaultSeed
+                    isAdminSelf -> !isFirstSync
+                    else -> false
+                }
                 
                 // Keep password/admin/profile updates from local database (where they are edited) ONLY if it's our self-profile, otherwise use the cloud database as authoritative
-                val finalPassword = if (useLocal) localMember.password else remoteMember.password
-                val finalRole = if (useLocal) localMember.role else remoteMember.role
+                val finalPassword = if (useLocal && localMember.password.isNotBlank()) localMember.password else remoteMember.password
+                val finalRole = if (useLocal && localMember.role.isNotBlank()) localMember.role else (if (remoteMember.role.isNotBlank()) remoteMember.role else localMember.role)
                 val finalIsAdmin = if (useLocal) localMember.isAdmin else remoteMember.isAdmin
-                val finalFullName = if (useLocal) localMember.fullName else remoteMember.fullName
-                val finalAssociation = if (useLocal) localMember.association else remoteMember.association
-                val finalCountry = if (useLocal) localMember.country else remoteMember.country
-                val finalCustomCara1 = if (useLocal) {
-                    localMember.customCara1Uri ?: remoteMember.customCara1Uri
-                } else {
-                    remoteMember.customCara1Uri ?: localMember.customCara1Uri
+                val finalFullName = if (useLocal && localMember.fullName.isNotBlank()) localMember.fullName else (if (remoteMember.fullName.isNotBlank()) remoteMember.fullName else localMember.fullName)
+                val finalAssociation = if (useLocal && localMember.association.isNotBlank()) localMember.association else (if (remoteMember.association.isNotBlank()) remoteMember.association else localMember.association)
+                val finalCountry = if (useLocal && localMember.country.isNotBlank()) localMember.country else (if (remoteMember.country.isNotBlank()) remoteMember.country else localMember.country)
+                
+                val finalCustomCara1 = when {
+                    useLocal && !localMember.customCara1Uri.isNullOrBlank() -> localMember.customCara1Uri
+                    !remoteMember.customCara1Uri.isNullOrBlank() -> remoteMember.customCara1Uri
+                    else -> localMember.customCara1Uri
                 }
-                val finalCustomCara2 = if (useLocal) {
-                    localMember.customCara2Uri ?: remoteMember.customCara2Uri
-                } else {
-                    remoteMember.customCara2Uri ?: localMember.customCara2Uri
+                val finalCustomCara2 = when {
+                    useLocal && !localMember.customCara2Uri.isNullOrBlank() -> localMember.customCara2Uri
+                    !remoteMember.customCara2Uri.isNullOrBlank() -> remoteMember.customCara2Uri
+                    else -> localMember.customCara2Uri
                 }
-                val finalPhotoUri = if (useLocal) {
-                    localMember.photoUri ?: remoteMember.photoUri
-                } else {
-                    remoteMember.photoUri ?: localMember.photoUri
+                val finalPhotoUri = when {
+                    useLocal && !localMember.photoUri.isNullOrBlank() -> localMember.photoUri
+                    !remoteMember.photoUri.isNullOrBlank() -> remoteMember.photoUri
+                    else -> localMember.photoUri
                 }
-                val finalQrUri = if (useLocal) {
-                    localMember.qrUri ?: remoteMember.qrUri
-                } else {
-                    remoteMember.qrUri ?: localMember.qrUri
+                val finalQrUri = when {
+                    useLocal && !localMember.qrUri.isNullOrBlank() -> localMember.qrUri
+                    !remoteMember.qrUri.isNullOrBlank() -> remoteMember.qrUri
+                    else -> localMember.qrUri
                 }
+
+                val finalEmojiAvatar = if (useLocal && localMember.emojiAvatar.isNotBlank()) localMember.emojiAvatar else (if (remoteMember.emojiAvatar.isNotBlank()) remoteMember.emojiAvatar else localMember.emojiAvatar)
+                val finalCredentialId = if (useLocal && localMember.credentialId.isNotBlank()) localMember.credentialId else (if (remoteMember.credentialId.isNotBlank()) remoteMember.credentialId else localMember.credentialId)
+                val finalJoinDate = if (useLocal && localMember.joinDate.isNotBlank()) localMember.joinDate else (if (remoteMember.joinDate.isNotBlank()) remoteMember.joinDate else localMember.joinDate)
+                val finalGoogleCalendarLinked = if (useLocal) localMember.isGoogleCalendarLinked else remoteMember.isGoogleCalendarLinked
+                val finalGoogleCalendarEmail = if (useLocal) localMember.googleCalendarEmail else (remoteMember.googleCalendarEmail ?: localMember.googleCalendarEmail)
 
                 // Create merged member
                 mergedMembers.add(
@@ -1551,6 +1695,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         role = finalRole,
                         association = finalAssociation,
                         country = finalCountry,
+                        emojiAvatar = finalEmojiAvatar,
+                        credentialId = finalCredentialId,
+                        joinDate = finalJoinDate,
+                        isGoogleCalendarLinked = finalGoogleCalendarLinked,
+                        googleCalendarEmail = finalGoogleCalendarEmail,
                         password = finalPassword,
                         points = maxOf(localMember.points, remoteMember.points)
                     )
@@ -1624,9 +1773,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else if (localAct != null) {
                 val compositeKey = "${localAct.title.trim().lowercase()}_${localAct.date.trim()}"
                 if (!tombstones.contains("activity_$compositeKey")) {
-                    if (isAdmin) {
-                        mergedMap[id] = localAct
-                    }
+                    mergedMap[id] = localAct
                 }
             } else {
                 remoteAct?.let {
@@ -1657,9 +1804,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val finalAct = if (useLocal) localAct else remoteAct
                 mergedListNoId.add(finalAct)
             } else if (localAct != null) {
-                if (isAdmin) {
-                    mergedListNoId.add(localAct)
-                }
+                mergedListNoId.add(localAct)
             } else {
                 remoteAct?.let { mergedListNoId.add(it) }
             }
@@ -1719,9 +1864,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 )
             } else if (localArt != null) {
-                if (isAdmin) {
-                    merged.add(localArt)
-                }
+                merged.add(localArt)
             } else {
                 remoteArt?.let { merged.add(it) }
             }
@@ -1866,7 +2009,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
             // Merging Members securely to preserve Admin-assigned carnet images and key updates Bidirectionally
             val mergedMembers = if (remoteMembers != null) {
-                smartMergeMembers(localMembers, remoteMembers, isFirstSync)
+                smartMergeMembers(localMembers, remoteMembers, isFirstSync, activeUserEmail = userEmail)
             } else {
                 localMembers
             }
@@ -1936,8 +2079,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     uploadFailedModules.add("actividades")
                 }
             }
-            if (userEmail.isNotBlank() && remoteMembers != null) {
-                // All users (including coordinator/admin) only sync and upload their own profile in background sync
+            if (userEmail.isNotBlank()) {
+                // All users (including coordinator/admin) sync and upload their own profile in background sync
                 val selfProfile = mergedMembers.find { it.email.trim().lowercase() == userEmail.trim().lowercase() }
                 if (selfProfile != null) {
                     try {
@@ -1948,6 +2091,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             }
+            if (remoteArticles != null) {
+                try {
+                    CloudSyncClient.uploadArticles(url, mergedArticles)
+                } catch (e: Exception) {
+                    Log.e("AppViewModel", "Failed uploading merged articles back to cloud", e)
+                    uploadFailedModules.add("artículos")
+                }
+            }
             if (isUserAdmin) {
                 if (remoteNotifications != null && cloudMergedNotifications != null) {
                     try {
@@ -1955,14 +2106,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     } catch (e: Exception) {
                         Log.e("AppViewModel", "Failed uploading merged notifications back to cloud", e)
                         uploadFailedModules.add("notificaciones")
-                    }
-                }
-                if (remoteArticles != null) {
-                    try {
-                        CloudSyncClient.uploadArticles(url, mergedArticles)
-                    } catch (e: Exception) {
-                        Log.e("AppViewModel", "Failed uploading merged articles back to cloud", e)
-                        uploadFailedModules.add("artículos")
                     }
                 }
             }
@@ -1992,9 +2135,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         applyCloudPreferences(remotePrefs)
                     }
                 } else {
-                    // Timestamps are equal, make sure local is synced or keep remote
-                    kotlinx.coroutines.withContext(Dispatchers.Main) {
-                        applyCloudPreferences(remotePrefs)
+                    // Timestamps are equal: preserve current user preferences without reverting to defaults
+                    if (localPrefs.lastUpdated > 0L) {
+                        try {
+                            CloudSyncClient.uploadPreferences(url, localPrefs, userEmail)
+                        } catch (e: Exception) {
+                            Log.e("AppViewModel", "Failed to upload local preferences: ${e.localizedMessage}")
+                        }
+                    } else if (remotePrefs.lastUpdated > 0L) {
+                        kotlinx.coroutines.withContext(Dispatchers.Main) {
+                            applyCloudPreferences(remotePrefs)
+                        }
                     }
                 }
             } else {

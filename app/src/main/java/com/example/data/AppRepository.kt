@@ -110,39 +110,6 @@ class AppRepository(private val appDao: AppDao) {
                     points = 500,
                     credentialId = "JE-DIR-01",
                     isAdmin = true
-                ),
-                Member(
-                    email = "miembro1@je.org",
-                    password = "miembro1",
-                    fullName = "Sofía Moreno",
-                    role = "Coordinadora Regional",
-                    association = "Jóvenes y Ecosistemas Latinoamérica",
-                    country = "Colombia",
-                    emojiAvatar = "🐆",
-                    points = 120,
-                    credentialId = "LA-JE-44910"
-                ),
-                Member(
-                    email = "miembro2@je.org",
-                    password = "miembro2",
-                    fullName = "Mateo Silva",
-                    role = "Embajador JE-RAM",
-                    association = "Jóvenes y Ecosistemas Latinoamérica",
-                    country = "Perú",
-                    emojiAvatar = "🐸",
-                    points = 50,
-                    credentialId = "LA-ECO-88741"
-                ),
-                Member(
-                    email = "miembro3@je.org",
-                    password = "miembro3",
-                    fullName = "Lucía Paz",
-                    role = "Líder JE-Mental",
-                    association = "Jóvenes y Ecosistemas Latinoamérica",
-                    country = "México",
-                    emojiAvatar = "🦉",
-                    points = 75,
-                    credentialId = "LA-ECO-12345"
                 )
             )
             appDao.insertMembers(seedMembers)

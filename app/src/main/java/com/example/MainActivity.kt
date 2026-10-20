@@ -2660,11 +2660,13 @@ fun CarnetTab(
 
     // Set form fields once profile updates externally
     LaunchedEffect(profile) {
-        editedName = profile.fullName
-        editedAssoc = profile.association
-        editedRole = profile.role
-        editedCountry = profile.country
-        editedAvatar = profile.emojiAvatar
+        if (!isEditing) {
+            editedName = profile.fullName
+            editedAssoc = profile.association
+            editedRole = profile.role
+            editedCountry = profile.country
+            editedAvatar = profile.emojiAvatar
+        }
     }
 
     val animatedRotation by animateFloatAsState(

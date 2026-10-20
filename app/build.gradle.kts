@@ -106,7 +106,7 @@ dependencies {
   // implementation(libs.firebase.ai)
   implementation(libs.firebase.auth)
   implementation(libs.firebase.database)
-  implementation(libs.firebase.crashlytics)
+  // implementation(libs.firebase.crashlytics)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.logging.interceptor)

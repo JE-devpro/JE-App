@@ -3,7 +3,6 @@ package com.example.util
 import android.os.Build
 import android.util.Log
 import com.example.data.api.FirebaseHelper
-import com.google.firebase.crashlytics.FirebaseCrashlytics
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.ValueEventListener
@@ -109,11 +108,6 @@ object CrashlyticsManager {
 
     fun log(message: String) {
         Log.d(TAG, message)
-        try {
-            FirebaseCrashlytics.getInstance().log(message)
-        } catch (e: Throwable) {
-            // Firebase app missing or not initialized in preview
-        }
         val entry = CrashLogEntry(
             tag = "INFO",
             message = message,
@@ -126,17 +120,6 @@ object CrashlyticsManager {
     fun recordException(throwable: Throwable, extraMessage: String? = null) {
         val msg = extraMessage ?: throwable.localizedMessage ?: "Excepción no manejada"
         Log.e(TAG, "RecordException: $msg", throwable)
-        
-        try {
-            FirebaseCrashlytics.getInstance().apply {
-                if (extraMessage != null) {
-                    log(extraMessage)
-                }
-                recordException(throwable)
-            }
-        } catch (e: Throwable) {
-            // Firebase exception fallback
-        }
 
         val snippet = throwable.stackTrace.take(5).joinToString("\n") { "  at ${it.className}.${it.methodName}(${it.fileName}:${it.lineNumber})" }
         val entry = CrashLogEntry(
@@ -152,25 +135,14 @@ object CrashlyticsManager {
 
     fun setUserId(userId: String) {
         currentUserId = userId
-        try {
-            FirebaseCrashlytics.getInstance().setUserId(userId)
-        } catch (e: Throwable) {
-        }
     }
 
     fun setCustomKey(key: String, value: String) {
-        try {
-            FirebaseCrashlytics.getInstance().setCustomKey(key, value)
-        } catch (e: Throwable) {
-        }
+        Log.d(TAG, "CustomKey set: $key = $value")
     }
 
     fun setCollectionEnabled(enabled: Boolean) {
         _isCollectionEnabled.value = enabled
-        try {
-            FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(enabled)
-        } catch (e: Throwable) {
-        }
         log("Crashlytics recopilación ${if (enabled) "activada" else "desactivada"}")
     }
 
