@@ -186,22 +186,23 @@ class MainActivity : ComponentActivity() {
             android.util.Log.e("MainActivity", "CrashlyticsManager init fallback: ${t.message}")
         }
 
-        // Solicitar permiso de notificaciones para Android 13+ (API 33+) en el inicio de la app
-        if (Build.VERSION.SDK_INT >= 33) {
-            if (androidx.core.content.ContextCompat.checkSelfPermission(
-                    this,
-                    "android.permission.POST_NOTIFICATIONS"
-                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-            ) {
-                androidx.core.app.ActivityCompat.requestPermissions(
-                    this,
-                    arrayOf("android.permission.POST_NOTIFICATIONS"),
-                    101
-                )
-            }
-        }
-
         setContent {
+            if (Build.VERSION.SDK_INT >= 33) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                ) { /* No-op or notification permission handling */ }
+
+                androidx.compose.runtime.LaunchedEffect(Unit) {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            context,
+                            "android.permission.POST_NOTIFICATIONS"
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        permissionLauncher.launch("android.permission.POST_NOTIFICATIONS")
+                    }
+                }
+            }
             val prefTheme by viewModel.prefTheme.collectAsStateWithLifecycle()
             val isDark = when (prefTheme) {
                 "light" -> false
